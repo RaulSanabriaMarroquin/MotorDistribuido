@@ -826,6 +826,7 @@ version = "0.1.0"
 dependencies = [
  "axum 0.7.9",
  "common",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",
