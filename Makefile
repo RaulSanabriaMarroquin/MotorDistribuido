@@ -1,4 +1,4 @@
-.PHONY: build test run-master run-worker run-client clean help
+.PHONY: build test run-master run-worker run-client clean help demo demo-start
 
 # Default target
 help:
@@ -10,6 +10,8 @@ help:
 	@echo "  run-worker     - Run a worker node (set WORKER_PORT=9001 for multiple workers)"
 	@echo "  run-client     - Run the client CLI"
 	@echo "  clean          - Clean build artifacts"
+	@echo "  demo           - Run demo script (interactive)"
+	@echo "  demo-start     - Show demo instructions"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make build"
@@ -45,4 +47,13 @@ demo-start:
 	@echo "  Terminal 2: make run-worker"
 	@echo "  Terminal 3: WORKER_PORT=9001 make run-worker"
 	@echo "  Terminal 4: make run-client -- list-workers"
+	@echo ""
+	@echo "Or use the demo script:"
+	@echo "  bash scripts/demo.sh"
+	@echo ""
+	@echo "Or use docker-compose:"
+	@echo "  docker-compose up"
+
+demo:
+	@bash scripts/demo.sh
 

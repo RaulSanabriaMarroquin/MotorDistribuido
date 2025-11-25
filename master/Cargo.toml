@@ -8,12 +8,13 @@ name = "master"
 path = "src/main.rs"
 
 [dependencies]
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["signal"] }
 axum = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
 common = { path = "../common" }
 

@@ -30,26 +30,42 @@
 - ✅ Makefile para build/test/demo
 - ✅ Estructura del proyecto organizada
 
+## ✅ Nuevas Funcionalidades Implementadas (Actualización)
+
+### Tolerancia a Fallos
+- ✅ Reintentos automáticos de tareas fallidas (máximo 1 reintento por tarea)
+- ✅ Replanificación de tareas cuando un worker cae (tareas se reasignan automáticamente)
+- ✅ Manejo de señales para apagado ordenado (SIGTERM/Ctrl+C en master y worker)
+
+### Operadores Avanzados
+- ✅ join por clave (inner join implementado)
+- ❌ shuffle entre etapas (pendiente)
+- ✅ Manejo de particiones (implementado: crea múltiples tareas por nodo según partitions/parallelism)
+
+### Infraestructura
+- ✅ docker-compose.yml para despliegue multinodo
+- ✅ Dockerfiles para master y worker
+
 ## ⚠️ Parcialmente Implementado
 
-- ⚠️ Idempotencia básica: Task attempt ID está en los tipos pero no se usa completamente
+- ✅ Idempotencia básica: Task attempt ID en nombres de archivo y verificación de outputs existentes
 - ⚠️ Métricas: Estructuras definidas pero métricas reales (CPU, memoria) no implementadas
 
 ## ❌ Pendiente
 
-### Tolerancia a Fallos
-- ❌ Reintentos automáticos de tareas fallidas
-- ❌ Replanificación de tareas cuando un worker cae
-- ❌ Persistencia de estado (sqlite o archivos)
-
-### Operadores Avanzados
-- ❌ join por clave
-- ❌ shuffle entre etapas
-- ❌ Manejo de particiones real
+### Persistencia
+- ✅ Persistencia de estado (SQLite implementado)
+  - Base de datos SQLite local (`master_state.db`)
+  - Guarda jobs y tasks al crearlos/actualizarlos
+  - Carga estado al iniciar el master
+  - Re-encola tareas pendientes/assigned al reiniciar
 
 ### Almacenamiento
-- ❌ Cache con spill a disco para Batch
-- ❌ Backpressure para Streaming
+- ✅ Cache con spill a disco para Batch (módulo `cache.rs` implementado)
+  - Cache por partición con umbral configurable (default: 100 MB)
+  - Spill automático a disco cuando se excede el umbral
+  - Recuperación automática desde disco
+- ❌ Backpressure para Streaming (no aplica - Ruta A)
 
 ### Observabilidad
 - ❌ Métricas reales de CPU y memoria
@@ -117,10 +133,12 @@ cargo run --bin client -- job-results <job_id>
 
 ## Próximos Pasos Recomendados
 
-1. Implementar reintentos y replanificación
-2. Agregar persistencia de estado
-3. Implementar métricas reales
-4. Agregar tests
-5. Implementar operadores avanzados (join, shuffle)
-6. Implementar cache con spill a disco
+1. ✅ ~~Implementar reintentos y replanificación~~ (COMPLETADO)
+2. Agregar persistencia de estado (sqlite)
+3. Implementar métricas reales (CPU, memoria)
+4. Agregar tests (unitarios, integración, E2E)
+5. ✅ ~~Implementar operador join~~ (COMPLETADO)
+6. Implementar operador shuffle
+7. Implementar cache con spill a disco
+8. Mejorar manejo de particiones
 

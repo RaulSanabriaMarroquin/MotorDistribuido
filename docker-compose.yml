@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  master:
+    build:
+      context: .
+      dockerfile: Dockerfile.master
+    container_name: motor-master
+    ports:
+      - "8080:8080"
+    environment:
+      - RUST_LOG=info
+    networks:
+      - motor-network
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+
+  worker1:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: motor-worker-1
+    ports:
+      - "8081:8081"
+    environment:
+      - RUST_LOG=info
+      - MASTER_URL=http://master:8080
+      - WORKER_PORT=8081
+    depends_on:
+      - master
+    networks:
+      - motor-network
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+
+  worker2:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: motor-worker-2
+    ports:
+      - "8082:8082"
+    environment:
+      - RUST_LOG=info
+      - MASTER_URL=http://master:8080
+      - WORKER_PORT=8082
+    depends_on:
+      - master
+    networks:
+      - motor-network
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+
+networks:
+  motor-network:
+    driver: bridge
+
+volumes:
+  data:
+  output:
+

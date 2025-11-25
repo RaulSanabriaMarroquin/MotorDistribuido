@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use tracing::{error, info};
+// Tracing imports removed as not used in this module
 
 /// Process records through an operator
 pub fn execute_operator(
@@ -48,7 +48,9 @@ pub fn execute_operator(
                 Err("No input path provided".to_string())
             }
         }
-        Operator::Join { .. } => Err("Join operator not yet implemented".to_string()),
+        Operator::Join { key, other_collection } => {
+            join_operator(input_paths, output_path, key, other_collection)
+        }
         Operator::Shuffle { .. } => Err("Shuffle operator not yet implemented".to_string()),
     }
 }
@@ -247,6 +249,94 @@ fn reduce_by_key_operator(
     Ok(count)
 }
 
+fn join_operator(
+    input_paths: &[String],
+    output_path: &str,
+    key: &str,
+    other_collection: &str,
+) -> Result<u64, String> {
+    // Join requires two input collections
+    // First input_paths[0] is the left collection
+    // other_collection should be a path to the right collection
+    // For simplicity, we'll use input_paths[0] as left and other_collection as right
+    
+    if input_paths.is_empty() {
+        return Err("Join requires at least one input path".to_string());
+    }
+
+    let left_path = &input_paths[0];
+    let right_path = other_collection;
+
+    // Build index from right collection (smaller one typically)
+    let mut right_index: HashMap<String, Vec<Value>> = HashMap::new();
+    
+    let right_file = fs::File::open(right_path)
+        .map_err(|e| format!("Failed to open right collection: {}", e))?;
+    let right_reader = BufReader::new(right_file);
+
+    for line in right_reader.lines() {
+        let line = line.map_err(|e| format!("Failed to read line: {}", e))?;
+        let value: Value = serde_json::from_str(&line)
+            .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+
+        let key_value = value
+            .get(key)
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| format!("Key '{}' not found or not a string in right collection", key))?
+            .to_string();
+
+        right_index.entry(key_value).or_insert_with(Vec::new).push(value);
+    }
+
+    // Join left collection with right index
+    let mut output = fs::File::create(output_path)
+        .map_err(|e| format!("Failed to create output file: {}", e))?;
+    let mut count = 0;
+
+    let left_file = fs::File::open(left_path)
+        .map_err(|e| format!("Failed to open left collection: {}", e))?;
+    let left_reader = BufReader::new(left_file);
+
+    for line in left_reader.lines() {
+        let line = line.map_err(|e| format!("Failed to read line: {}", e))?;
+        let left_value: Value = serde_json::from_str(&line)
+            .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+
+        let key_value = left_value
+            .get(key)
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| format!("Key '{}' not found or not a string in left collection", key))?
+            .to_string();
+
+        // Find matching records in right collection
+        if let Some(right_values) = right_index.get(&key_value) {
+            for right_value in right_values {
+                // Merge left and right values
+                let mut joined = left_value.clone();
+                if let Some(obj) = joined.as_object_mut() {
+                    // Add fields from right value, prefixing with "right_" if conflict
+                    if let Some(right_obj) = right_value.as_object() {
+                        for (k, v) in right_obj {
+                            if obj.contains_key(k) && k != key {
+                                // Prefix to avoid conflict
+                                obj.insert(format!("right_{}", k), v.clone());
+                            } else {
+                                obj.insert(k.clone(), v.clone());
+                            }
+                        }
+                    }
+                }
+                writeln!(output, "{}", serde_json::to_string(&joined).unwrap())
+                    .map_err(|e| format!("Failed to write joined record: {}", e))?;
+                count += 1;
+            }
+        }
+        // Inner join: skip if no match
+    }
+
+    Ok(count)
+}
+
 // Helper functions to apply user-defined functions
 fn apply_map_function(line: &str, fn_name: &str) -> Result<String, String> {
     match fn_name {
@@ -299,7 +389,20 @@ fn apply_reduce_function(acc: &Value, value: &Value, fn_name: &str) -> Result<Va
         "sum" => {
             let acc_num = acc.as_f64().or_else(|| acc.as_u64().map(|n| n as f64)).unwrap_or(0.0);
             let val_num = value.as_f64().or_else(|| value.as_u64().map(|n| n as f64)).unwrap_or(0.0);
-            Ok(Value::Number((acc_num + val_num).into()))
+            let sum = acc_num + val_num;
+            // Convert to Number - use integer if possible, otherwise float
+            if sum.fract() == 0.0 && sum >= 0.0 {
+                Ok(Value::Number(serde_json::Number::from(sum as u64)))
+            } else if sum.fract() == 0.0 {
+                Ok(Value::Number(serde_json::Number::from(sum as i64)))
+            } else {
+                // For floats, we need to use Value::Number with from_f64
+                // If that fails, fall back to string representation
+                match serde_json::Number::from_f64(sum) {
+                    Some(n) => Ok(Value::Number(n)),
+                    None => Ok(Value::String(sum.to_string())),
+                }
+            }
         }
         "count" => {
             let acc_num = acc.as_u64().unwrap_or(0);

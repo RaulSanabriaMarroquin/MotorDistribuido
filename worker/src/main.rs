@@ -1,4 +1,5 @@
 mod operators;
+mod cache;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -133,8 +134,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // 5) Mantener el worker corriendo
-    axum::serve(listener, app).await?;
+    // 5) Mantener el worker corriendo con graceful shutdown
+    let shutdown_signal = async {
+        #[cfg(unix)]
+        {
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("Failed to install SIGTERM handler")
+                .recv()
+                .await;
+        }
+        #[cfg(windows)]
+        {
+            tokio::signal::windows::ctrl_c()
+                .expect("Failed to install Ctrl+C handler")
+                .recv()
+                .await;
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("Failed to install Ctrl+C handler");
+        }
+    };
+
+    let server = axum::serve(listener, app);
+    let graceful = server.with_graceful_shutdown(shutdown_signal);
+
+    info!("Press Ctrl+C to shutdown gracefully...");
+    graceful.await?;
+
+    info!("Worker shutting down gracefully...");
     Ok(())
 }
 
@@ -160,16 +190,45 @@ async fn execute_task(
     let mut records_processed = 0u64;
     let mut error_msg = None;
 
+    // Idempotency: Check if output already exists for this attempt
+    // If output exists and is valid, skip execution (idempotency)
+    let output_exists = std::path::Path::new(&assignment.output_path).exists();
+    let should_execute = if output_exists {
+        // Check if file is valid (non-empty)
+        if let Ok(metadata) = std::fs::metadata(&assignment.output_path) {
+            if metadata.len() > 0 {
+                info!(
+                    task_id = %assignment.task_id,
+                    attempt_id = assignment.attempt_id,
+                    output_path = %assignment.output_path,
+                    "Output already exists, skipping execution (idempotency)"
+                );
+                false
+            } else {
+                true // File exists but is empty, re-execute
+            }
+        } else {
+            true // Can't check, re-execute
+        }
+    } else {
+        true // Output doesn't exist, execute
+    };
+
     // Execute task in a blocking thread pool to avoid blocking async runtime
     let assignment_clone = assignment.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        operators::execute_operator(
-            &assignment_clone.operator,
-            &assignment_clone.input_paths,
-            &assignment_clone.output_path,
-        )
-    })
-    .await;
+    let result = if should_execute {
+        tokio::task::spawn_blocking(move || {
+            operators::execute_operator(
+                &assignment_clone.operator,
+                &assignment_clone.input_paths,
+                &assignment_clone.output_path,
+            )
+        })
+        .await
+    } else {
+        // Skip execution, return success with existing output
+        Ok(Ok(0)) // Count will be updated from file if needed
+    };
 
     match result {
         Ok(Ok(count)) => {
