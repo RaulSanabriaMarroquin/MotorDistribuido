@@ -80,9 +80,62 @@ pub struct WorkersListResponse {
     pub workers: Vec<WorkerListItem>,
 }
 
+// ============================================================================
+// Job/Task para semana 2
+// ============================================================================
+
+/// Job submission request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobSpec {
+    /// Job name/description
+    pub name: String,
+    /// Operation: "map_add", "map_mul", "filter_gt", "filter_lt"
+    pub operation: String,
+    /// Parameter for the operation (e.g., factor for map_mul, threshold for filter_gt)
+    pub param: Option<i64>,
+    /// Input data (vector of integers)
+    pub input: Vec<i64>,
+}
+
+/// Response from job submission
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubmitJobResponse {
+    pub version: String,
+    pub job_id: String,
+    pub message: String,
+}
+
+/// Task assigned to a worker
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskAssignment {
+    pub job_id: String,
+    pub task_id: String,
+    pub operation: String,
+    pub param: Option<i64>,
+    pub input: Vec<i64>,
+}
+
+/// Task result returned by worker
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskResult {
+    pub job_id: String,
+    pub task_id: String,
+    pub output: Vec<i64>,
+}
+
+/// Job progress/status (used by master)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobProgress {
+    pub job_id: String,
+    pub name: String,
+    pub total_tasks: usize,
+    pub completed_tasks: usize,
+    pub failed_tasks: usize,
+    pub status: String, // "running", "completed", "failed"
+}
+
 #[cfg(test)]
 mod tests {
     // puedes agregar tests útiles luego,
     // pero quita por ahora el test con Message inexistente
 }
-

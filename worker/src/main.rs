@@ -1,7 +1,15 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use axum::{routing::get, Router};
-use common::{HeartbeatRequest, RegisterRequest, RegisterResponse, MESSAGE_VERSION};
+use axum::{
+    extract::Json,
+    response::Json as AxumJson,
+    routing::{get, post},
+    Router,
+};
+use common::{
+    HeartbeatRequest, RegisterRequest, RegisterResponse, TaskAssignment, TaskResult,
+    MESSAGE_VERSION,
+};
 use reqwest::Client;
 use tokio::{net::TcpListener, time::sleep};
 use tracing::{error, info};
@@ -63,18 +71,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sleep(backoff).await;
     };
 
-    // 2) Servidor HTTP local con /health
-    let app = Router::new().route("/health", get(|| async { "ok" }));
+    // 2) Servidor HTTP local con /health y /api/v1/tasks/execute
+    let master_url_clone = master_url.clone();
+    let http_client_clone = http_client.clone();
+    let app = Router::new()
+        .route("/health", get(|| async { "ok" }))
+        .route("/api/v1/tasks/execute", post(execute_task))
+        .with_state((master_url_clone, http_client_clone));
+
     let addr = format!("{}:{}", host, port);
     let listener = TcpListener::bind(&addr).await?;
-    info!(%addr, "Starting worker HTTP server (/health)");
+    info!(%addr, "Starting worker HTTP server (/health, /api/v1/tasks/execute)");
 
     // 3) Task de heartbeats
     let hb_client = http_client.clone();
     let hb_master_url = master_url.clone();
     let hb_worker_id = worker_id.clone();
     tokio::spawn(async move {
-        let hb_url = format!("{}/api/v1/workers/{}/heartbeat", hb_master_url, hb_worker_id);
+        let hb_url = format!(
+            "{}/api/v1/workers/{}/heartbeat",
+            hb_master_url, hb_worker_id
+        );
         loop {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -105,4 +122,95 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 4) Mantener el worker corriendo
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+/// Execute a task and return result
+async fn execute_task(
+    axum::extract::State((master_url, http_client)): axum::extract::State<(String, Client)>,
+    Json(payload): Json<TaskAssignment>,
+) -> Result<AxumJson<serde_json::Value>, axum::http::StatusCode> {
+    info!(
+        "Executing task: {} for job: {} (op: {})",
+        payload.task_id, payload.job_id, payload.operation
+    );
+
+    // Execute the operation
+    let output: Vec<i64> = match payload.operation.as_str() {
+        "map_add" => {
+            let param = payload.param.unwrap_or(0);
+            payload.input.iter().map(|x| x + param).collect()
+        }
+        "map_mul" => {
+            let param = payload.param.unwrap_or(1);
+            payload.input.iter().map(|x| x * param).collect()
+        }
+        "filter_gt" => {
+            let threshold = payload.param.unwrap_or(0);
+            payload
+                .input
+                .iter()
+                .copied()
+                .filter(|x| *x > threshold)
+                .collect()
+        }
+        "filter_lt" => {
+            let threshold = payload.param.unwrap_or(0);
+            payload
+                .input
+                .iter()
+                .copied()
+                .filter(|x| *x < threshold)
+                .collect()
+        }
+        _ => {
+            error!("Unknown operation: {}", payload.operation);
+            return Err(axum::http::StatusCode::BAD_REQUEST);
+        }
+    };
+
+    info!(
+        "Task {} completed: input_size={}, output_size={}",
+        payload.task_id,
+        payload.input.len(),
+        output.len()
+    );
+
+    // Send result back to master
+    let task_result = TaskResult {
+        job_id: payload.job_id.clone(),
+        task_id: payload.task_id.clone(),
+        output: output.clone(),
+    };
+
+    let result_url = format!("{}/api/v1/jobs/{}/task_result", master_url, payload.job_id);
+
+    match http_client
+        .post(&result_url)
+        .json(&task_result)
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            info!("Task result sent to master for task: {}", payload.task_id);
+        }
+        Ok(resp) => {
+            error!(
+                "Failed to send task result to master: {} (status: {})",
+                result_url,
+                resp.status()
+            );
+        }
+        Err(e) => {
+            error!(
+                "Error sending task result to master: {} (error: {:?})",
+                result_url, e
+            );
+        }
+    }
+
+    Ok(AxumJson(serde_json::json!({
+        "status": "ok",
+        "task_id": payload.task_id,
+        "output": output
+    })))
 }
