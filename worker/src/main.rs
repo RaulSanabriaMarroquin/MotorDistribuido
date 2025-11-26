@@ -1,3 +1,5 @@
+mod operators;
+
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::{
@@ -10,7 +12,9 @@ use common::{
     HeartbeatRequest, RegisterRequest, RegisterResponse, TaskAssignment, TaskResult,
     MESSAGE_VERSION,
 };
+use operators::{filter, flat_map, map, reduce_by_key, reduce_by_key_to_vec};
 use reqwest::Client;
+use serde_json::Value;
 use tokio::{net::TcpListener, time::sleep};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
@@ -134,33 +138,80 @@ async fn execute_task(
         payload.task_id, payload.job_id, payload.operation
     );
 
+    // Get input data (support both legacy and new format)
+    let input_data = payload.input.as_ref().ok_or_else(|| {
+        error!("No input data provided for task {}", payload.task_id);
+        axum::http::StatusCode::BAD_REQUEST
+    })?;
+
     // Execute the operation
-    let output: Vec<i64> = match payload.operation.as_str() {
+    let (output, output_data) = match payload.operation.as_str() {
+        // Legacy operations (for backward compatibility)
         "map_add" => {
-            let param = payload.param.unwrap_or(0);
-            payload.input.iter().map(|x| x + param).collect()
+            let result = map(input_data, Some("add"), payload.param)
+                .map_err(|e| {
+                    error!("Map operation failed: {}", e);
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+            (Some(result), None)
         }
         "map_mul" => {
-            let param = payload.param.unwrap_or(1);
-            payload.input.iter().map(|x| x * param).collect()
+            let result = map(input_data, Some("mul"), payload.param)
+                .map_err(|e| {
+                    error!("Map operation failed: {}", e);
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+            (Some(result), None)
         }
         "filter_gt" => {
-            let threshold = payload.param.unwrap_or(0);
-            payload
-                .input
-                .iter()
-                .copied()
-                .filter(|x| *x > threshold)
-                .collect()
+            let result = filter(input_data, Some("gt"), payload.param)
+                .map_err(|e| {
+                    error!("Filter operation failed: {}", e);
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+            (Some(result), None)
         }
         "filter_lt" => {
-            let threshold = payload.param.unwrap_or(0);
-            payload
-                .input
-                .iter()
-                .copied()
-                .filter(|x| *x < threshold)
-                .collect()
+            let result = filter(input_data, Some("lt"), payload.param)
+                .map_err(|e| {
+                    error!("Filter operation failed: {}", e);
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+            (Some(result), None)
+        }
+        // New DAG operations
+        "map" => {
+            let result = map(input_data, payload.fn_name.as_deref(), payload.param)
+                .map_err(|e| {
+                    error!("Map operation failed: {}", e);
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+            (Some(result), None)
+        }
+        "flat_map" => {
+            let result = flat_map(input_data, payload.fn_name.as_deref())
+                .map_err(|e| {
+                    error!("Flat_map operation failed: {}", e);
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+            (Some(result), None)
+        }
+        "filter" => {
+            let result = filter(input_data, payload.fn_name.as_deref(), payload.param)
+                .map_err(|e| {
+                    error!("Filter operation failed: {}", e);
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+            (Some(result), None)
+        }
+        "reduce_by_key" => {
+            let result = reduce_by_key(input_data, payload.fn_name.as_deref())
+                .map_err(|e| {
+                    error!("Reduce_by_key operation failed: {}", e);
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+            let vec_result = reduce_by_key_to_vec(&result);
+            (None, Some(Value::Array(vec_result)))
         }
         _ => {
             error!("Unknown operation: {}", payload.operation);
@@ -168,18 +219,29 @@ async fn execute_task(
         }
     };
 
+    let output_size = output.as_ref().map(|v| v.len()).unwrap_or(0);
+    let output_data_size = output_data.as_ref().and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    
     info!(
-        "Task {} completed: input_size={}, output_size={}",
+        "Task {} completed: input_size={}, output_size={} (output_data_size={})",
         payload.task_id,
-        payload.input.len(),
-        output.len()
+        input_data.len(),
+        output_size,
+        output_data_size
     );
 
     // Send result back to master
+    let attempt_id = payload.attempt_id.unwrap_or(0);
     let task_result = TaskResult {
         job_id: payload.job_id.clone(),
         task_id: payload.task_id.clone(),
+        node_id: payload.node_id.clone(),
+        attempt_id,
         output: output.clone(),
+        output_path: None,
+        output_data: output_data.clone(),
+        success: true,
+        error: None,
     };
 
     let result_url = format!("{}/api/v1/jobs/{}/task_result", master_url, payload.job_id);

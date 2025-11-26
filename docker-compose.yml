@@ -1,0 +1,82 @@
+version: '3.8'
+
+services:
+  master:
+    build:
+      context: .
+      dockerfile: Dockerfile.master
+    container_name: motor-master
+    ports:
+      - "8080:8080"
+    environment:
+      - RUST_LOG=info
+    networks:
+      - motor-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/workers"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  worker1:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: motor-worker-1
+    ports:
+      - "9000:9000"
+    environment:
+      - MASTER_URL=http://master:8080
+      - WORKER_HOST=0.0.0.0
+      - WORKER_PORT=9000
+      - HEARTBEAT_INTERVAL_SECS=3
+      - RUST_LOG=info
+    depends_on:
+      - master
+    networks:
+      - motor-network
+    restart: unless-stopped
+
+  worker2:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: motor-worker-2
+    ports:
+      - "9001:9001"
+    environment:
+      - MASTER_URL=http://master:8080
+      - WORKER_HOST=0.0.0.0
+      - WORKER_PORT=9001
+      - HEARTBEAT_INTERVAL_SECS=3
+      - RUST_LOG=info
+    depends_on:
+      - master
+    networks:
+      - motor-network
+    restart: unless-stopped
+
+  worker3:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: motor-worker-3
+    ports:
+      - "9002:9002"
+    environment:
+      - MASTER_URL=http://master:8080
+      - WORKER_HOST=0.0.0.0
+      - WORKER_PORT=9002
+      - HEARTBEAT_INTERVAL_SECS=3
+      - RUST_LOG=info
+    depends_on:
+      - master
+    networks:
+      - motor-network
+    restart: unless-stopped
+
+networks:
+  motor-network:
+    driver: bridge
+

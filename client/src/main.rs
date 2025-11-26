@@ -149,9 +149,11 @@ async fn submit_job(
 
     let job_spec = JobSpec {
         name: name.to_string(),
-        operation: operation.to_string(),
+        dag: None,
+        parallelism: None,
+        operation: Some(operation.to_string()),
         param,
-        input,
+        input: Some(input),
     };
 
     let mut req = reqwest::Client::new().post(&url).json(&job_spec);
