@@ -1,3 +1,4 @@
+mod cache;
 mod operators;
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -12,7 +13,10 @@ use common::{
     HeartbeatRequest, RegisterRequest, RegisterResponse, TaskAssignment, TaskResult,
     MESSAGE_VERSION,
 };
-use operators::{filter, flat_map, map, reduce_by_key, reduce_by_key_to_vec};
+use operators::{
+    filter, flat_map, join, map, read_csv, read_jsonl, reduce_by_key, reduce_by_key_to_vec,
+    write_csv, write_jsonl,
+};
 use reqwest::Client;
 use serde_json::Value;
 use tokio::{net::TcpListener, time::sleep};
@@ -38,7 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parse()
         .expect("Invalid HEARTBEAT_INTERVAL_SECS");
 
-    info!(%master_url, %host, port, "Worker node starting");
+    info!(%master_url, %host, port, "Nodo worker iniciando");
 
     let http_client = Client::new();
 
@@ -59,19 +63,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             Ok(resp) if resp.status().is_success() => {
                 let body: RegisterResponse = resp.json().await?;
-                info!(worker_id = %body.worker_id, "Registration successful");
+                info!(worker_id = %body.worker_id, "Registro exitoso");
                 break body.worker_id;
             }
             Ok(resp) => {
-                error!(status=?resp.status(), "Registration failed");
+                error!(status=?resp.status(), "Registro fallido");
             }
             Err(e) => {
-                error!(error=?e, "Error registering worker");
+                error!(error=?e, "Error al registrar worker");
             }
         }
 
         let backoff = Duration::from_secs(3);
-        info!(?backoff, "Retrying registration after backoff");
+        info!(?backoff, "Reintentando registro después de backoff");
         sleep(backoff).await;
     };
 
@@ -85,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let addr = format!("{}:{}", host, port);
     let listener = TcpListener::bind(&addr).await?;
-    info!(%addr, "Starting worker HTTP server (/health, /api/v1/tasks/execute)");
+    info!(%addr, "Iniciando servidor HTTP del worker (/health, /api/v1/tasks/execute)");
 
     // 3) Task de heartbeats
     let hb_client = http_client.clone();
@@ -109,13 +113,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             match hb_client.post(&hb_url).json(&hb_req).send().await {
                 Ok(resp) if resp.status().is_success() => {
-                    info!("Heartbeat sent");
+                    info!("Heartbeat enviado");
                 }
                 Ok(resp) => {
-                    error!(status=?resp.status(), "Heartbeat failed");
+                    error!(status=?resp.status(), "Heartbeat fallido");
                 }
                 Err(e) => {
-                    error!(error=?e, "Error sending heartbeat");
+                    error!(error=?e, "Error al enviar heartbeat");
                 }
             }
 
@@ -123,98 +127,275 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // 4) Mantener el worker corriendo
-    axum::serve(listener, app).await?;
+    // 4) Mantener el worker corriendo con graceful shutdown (per specification section 12)
+    let shutdown_signal = async {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut sigterm = signal(SignalKind::terminate()).ok();
+            let mut sigint = signal(SignalKind::interrupt()).ok();
+            
+            tokio::select! {
+                _ = async {
+                    if let Some(mut sigterm) = sigterm {
+                        sigterm.recv().await
+                    } else {
+                        futures::future::pending().await
+                    }
+                } => {},
+                _ = async {
+                    if let Some(mut sigint) = sigint {
+                        sigint.recv().await
+                    } else {
+                        futures::future::pending().await
+                    }
+                } => {},
+            }
+        }
+        #[cfg(windows)]
+        {
+            use tokio::signal::windows::{ctrl_c, ctrl_break};
+            let mut ctrl_c_stream = ctrl_c().ok();
+            let mut ctrl_break_stream = ctrl_break().ok();
+            tokio::select! {
+                _ = async {
+                    if let Some(mut stream) = ctrl_c_stream {
+                        stream.recv().await
+                    } else {
+                        futures::future::pending().await
+                    }
+                } => {},
+                _ = async {
+                    if let Some(mut stream) = ctrl_break_stream {
+                        stream.recv().await
+                    } else {
+                        futures::future::pending().await
+                    }
+                } => {},
+            }
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            futures::future::pending().await
+        }
+    };
+
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    
+    tokio::spawn(async move {
+        shutdown_signal.await;
+        info!("Señal de apagado recibida, iniciando apagado ordenado...");
+        let _ = shutdown_tx.send(());
+    });
+
+    let server = axum::serve(listener, app);
+    
+    tokio::select! {
+        result = server => {
+            if let Err(e) = result {
+                error!("Error del servidor: {}", e);
+            }
+        }
+        _ = shutdown_rx => {
+            info!("Señal de apagado recibida, deteniendo worker...");
+        }
+    }
+
+    info!("Worker apagándose ordenadamente...");
     Ok(())
 }
 
-/// Execute a task and return result
+/// Ejecutar una tarea y retornar resultado
 async fn execute_task(
     axum::extract::State((master_url, http_client)): axum::extract::State<(String, Client)>,
     Json(payload): Json<TaskAssignment>,
 ) -> Result<AxumJson<serde_json::Value>, axum::http::StatusCode> {
     info!(
-        "Executing task: {} for job: {} (op: {})",
+        "Ejecutando tarea: {} para el job: {} (op: {})",
         payload.task_id, payload.job_id, payload.operation
     );
 
-    // Get input data (support both legacy and new format)
-    let input_data = payload.input.as_ref().ok_or_else(|| {
-        error!("No input data provided for task {}", payload.task_id);
-        axum::http::StatusCode::BAD_REQUEST
-    })?;
-
-    // Execute the operation
-    let (output, output_data) = match payload.operation.as_str() {
-        // Legacy operations (for backward compatibility)
-        "map_add" => {
-            let result = map(input_data, Some("add"), payload.param)
+    // Obtener datos de entrada (soporta formato legacy y nuevo)
+    // Si se proporciona input_path, leer desde archivo; de lo contrario usar campo input
+    let input_data = if let Some(ref input_path) = payload.input_path {
+        // Leer desde archivo basado en extensión
+        if input_path.ends_with(".csv") {
+            read_csv(input_path)
+                .await
                 .map_err(|e| {
-                    error!("Map operation failed: {}", e);
+                    error!("Error al leer CSV: {}", e);
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                })?
+        } else if input_path.ends_with(".jsonl") {
+            read_jsonl(input_path)
+                .await
+                .map_err(|e| {
+                    error!("Error al leer JSONL: {}", e);
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                })?
+        } else {
+            return Err(axum::http::StatusCode::BAD_REQUEST);
+        }
+    } else if let Some(ref input) = payload.input {
+        input.clone()
+    } else {
+        return Err(axum::http::StatusCode::BAD_REQUEST);
+    };
+
+    // Ejecutar la operación
+    let (output, output_data) = match payload.operation.as_str() {
+        // Operaciones legacy (para compatibilidad hacia atrás)
+        "map_add" => {
+            let result = map(&input_data, Some("add"), payload.param)
+                .map_err(|e| {
+                    error!("Operación map falló: {}", e);
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR
                 })?;
             (Some(result), None)
         }
         "map_mul" => {
-            let result = map(input_data, Some("mul"), payload.param)
+            let result = map(&input_data, Some("mul"), payload.param)
                 .map_err(|e| {
-                    error!("Map operation failed: {}", e);
+                    error!("Operación map falló: {}", e);
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR
                 })?;
             (Some(result), None)
         }
         "filter_gt" => {
-            let result = filter(input_data, Some("gt"), payload.param)
+            let result = filter(&input_data, Some("gt"), payload.param)
                 .map_err(|e| {
-                    error!("Filter operation failed: {}", e);
+                    error!("Operación filter falló: {}", e);
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR
                 })?;
             (Some(result), None)
         }
         "filter_lt" => {
-            let result = filter(input_data, Some("lt"), payload.param)
+            let result = filter(&input_data, Some("lt"), payload.param)
                 .map_err(|e| {
-                    error!("Filter operation failed: {}", e);
+                    error!("Operación filter falló: {}", e);
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR
                 })?;
             (Some(result), None)
         }
-        // New DAG operations
+        // Operaciones DAG nuevas
         "map" => {
-            let result = map(input_data, payload.fn_name.as_deref(), payload.param)
+            let result = map(&input_data, payload.fn_name.as_deref(), payload.param)
                 .map_err(|e| {
-                    error!("Map operation failed: {}", e);
+                    error!("Operación map falló: {}", e);
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR
                 })?;
             (Some(result), None)
         }
         "flat_map" => {
-            let result = flat_map(input_data, payload.fn_name.as_deref())
+            let result = flat_map(&input_data, payload.fn_name.as_deref())
                 .map_err(|e| {
-                    error!("Flat_map operation failed: {}", e);
+                    error!("Operación flat_map falló: {}", e);
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR
                 })?;
             (Some(result), None)
         }
         "filter" => {
-            let result = filter(input_data, payload.fn_name.as_deref(), payload.param)
+            let result = filter(&input_data, payload.fn_name.as_deref(), payload.param)
                 .map_err(|e| {
-                    error!("Filter operation failed: {}", e);
+                    error!("Operación filter falló: {}", e);
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR
                 })?;
             (Some(result), None)
         }
         "reduce_by_key" => {
-            let result = reduce_by_key(input_data, payload.fn_name.as_deref())
+            let result = reduce_by_key(&input_data, payload.fn_name.as_deref())
                 .map_err(|e| {
-                    error!("Reduce_by_key operation failed: {}", e);
+                    error!("Operación reduce_by_key falló: {}", e);
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR
                 })?;
             let vec_result = reduce_by_key_to_vec(&result);
             (None, Some(Value::Array(vec_result)))
         }
+        "read_csv" => {
+            // Esto se maneja arriba en la lectura de entrada, pero también podemos manejarlo aquí
+            if let Some(ref path) = payload.input_path {
+                let result = read_csv(path)
+                    .await
+                    .map_err(|e| {
+                        error!("Error al leer CSV: {}", e);
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                    })?;
+                (Some(result), None)
+            } else {
+                return Err(axum::http::StatusCode::BAD_REQUEST);
+            }
+        }
+        "read_jsonl" => {
+            if let Some(ref path) = payload.input_path {
+                let result = read_jsonl(path)
+                    .await
+                    .map_err(|e| {
+                        error!("Error al leer JSONL: {}", e);
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                    })?;
+                (Some(result), None)
+            } else {
+                return Err(axum::http::StatusCode::BAD_REQUEST);
+            }
+        }
+        "write_csv" => {
+            // Para operaciones de escritura, necesitamos una ruta de salida
+            // Por ahora, generar una ruta basada en task_id
+            let output_path = format!("output/{}/result.csv", payload.job_id);
+            let path = write_csv(&output_path, &input_data)
+                .await
+                .map_err(|e| {
+                    error!("Error al escribir CSV: {}", e);
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+            (None, Some(Value::String(path)))
+        }
+        "write_jsonl" => {
+            let output_path = format!("output/{}/result.jsonl", payload.job_id);
+            let path = write_jsonl(&output_path, &input_data)
+                .await
+                .map_err(|e| {
+                    error!("Error al escribir JSONL: {}", e);
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+            (None, Some(Value::String(path)))
+        }
+        "join" => {
+            // Join requiere dos entradas
+            let right_data = if let Some(ref input_path2) = payload.input_path2 {
+                if input_path2.ends_with(".csv") {
+                    read_csv(input_path2)
+                        .await
+                        .map_err(|e| {
+                            error!("Error al leer CSV para join: {}", e);
+                            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                        })?
+                } else if input_path2.ends_with(".jsonl") {
+                    read_jsonl(input_path2)
+                        .await
+                        .map_err(|e| {
+                            error!("Error al leer JSONL para join: {}", e);
+                            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                        })?
+                } else {
+                    return Err(axum::http::StatusCode::BAD_REQUEST);
+                }
+            } else if let Some(ref input2) = payload.input2 {
+                input2.clone()
+            } else {
+                error!("Operación join requiere segunda entrada (input2 o input_path2)");
+                return Err(axum::http::StatusCode::BAD_REQUEST);
+            };
+
+            let result = join(&input_data, &right_data, payload.key.as_deref())
+                .map_err(|e| {
+                    error!("Operación join falló: {}", e);
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+            (None, Some(Value::Array(result)))
+        }
         _ => {
-            error!("Unknown operation: {}", payload.operation);
+            error!("Operación desconocida: {}", payload.operation);
             return Err(axum::http::StatusCode::BAD_REQUEST);
         }
     };
@@ -223,14 +404,21 @@ async fn execute_task(
     let output_data_size = output_data.as_ref().and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
     
     info!(
-        "Task {} completed: input_size={}, output_size={} (output_data_size={})",
+        "Tarea {} completada: input_size={}, output_size={} (output_data_size={})",
         payload.task_id,
         input_data.len(),
         output_size,
         output_data_size
     );
 
-    // Send result back to master
+    // Determinar ruta de salida si es una operación de escritura
+    let output_path = if payload.operation == "write_csv" || payload.operation == "write_jsonl" {
+        output_data.as_ref().and_then(|v| v.as_str()).map(|s| s.to_string())
+    } else {
+        None
+    };
+
+    // Enviar resultado de vuelta al master
     let attempt_id = payload.attempt_id.unwrap_or(0);
     let task_result = TaskResult {
         job_id: payload.job_id.clone(),
@@ -238,7 +426,7 @@ async fn execute_task(
         node_id: payload.node_id.clone(),
         attempt_id,
         output: output.clone(),
-        output_path: None,
+        output_path,
         output_data: output_data.clone(),
         success: true,
         error: None,
@@ -253,18 +441,18 @@ async fn execute_task(
         .await
     {
         Ok(resp) if resp.status().is_success() => {
-            info!("Task result sent to master for task: {}", payload.task_id);
+            info!("Resultado de tarea enviado al master para la tarea: {}", payload.task_id);
         }
         Ok(resp) => {
             error!(
-                "Failed to send task result to master: {} (status: {})",
+                "Error al enviar resultado de tarea al master: {} (estado: {})",
                 result_url,
                 resp.status()
             );
         }
         Err(e) => {
             error!(
-                "Error sending task result to master: {} (error: {:?})",
+                "Error al enviar resultado de tarea al master: {} (error: {:?})",
                 result_url, e
             );
         }

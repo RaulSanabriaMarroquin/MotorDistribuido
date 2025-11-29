@@ -1,10 +1,10 @@
-//! DAG parsing and task generation
-//! Processes DAG structure from job specification and creates tasks
+//! Análisis de DAG y generación de tareas
+//! Procesa la estructura DAG de la especificación del job y crea tareas
 
-use common::{Dag, DagEdge, DagNode};
+use common::{Dag, DagNode};
 use std::collections::{HashMap, HashSet};
 
-/// Represents a task stage in the DAG execution
+/// Representa una etapa de tarea en la ejecución del DAG
 #[derive(Debug, Clone)]
 pub struct TaskStage {
     pub node_id: String,
@@ -13,13 +13,13 @@ pub struct TaskStage {
     pub key: Option<String>,
     pub path: Option<String>,
     pub partitions: Option<usize>,
-    pub dependencies: Vec<String>, // IDs of nodes this stage depends on
+    pub dependencies: Vec<String>, // IDs de nodos de los que esta etapa depende
 }
 
-/// Parse DAG and create task stages
+/// Analizar DAG y crear etapas de tareas
 pub fn parse_dag(dag: &Dag) -> Result<Vec<TaskStage>, String> {
-    // Build dependency graph
-    let mut node_map: HashMap<String, &DagNode> = dag
+    // Construir grafo de dependencias
+    let node_map: HashMap<String, &DagNode> = dag
         .nodes
         .iter()
         .map(|node| (node.id.clone(), node))
@@ -28,29 +28,29 @@ pub fn parse_dag(dag: &Dag) -> Result<Vec<TaskStage>, String> {
     let mut dependencies: HashMap<String, Vec<String>> = HashMap::new();
     let mut dependents: HashMap<String, Vec<String>> = HashMap::new();
 
-    // Initialize dependencies
+    // Inicializar dependencias
     for node in &dag.nodes {
         dependencies.insert(node.id.clone(), Vec::new());
         dependents.insert(node.id.clone(), Vec::new());
     }
 
-    // Process edges to build dependency graph
+    // Procesar aristas para construir grafo de dependencias
     for edge in &dag.edges {
         let from = &edge.0;
         let to = &edge.1;
 
         if !node_map.contains_key(from) {
-            return Err(format!("Edge references unknown node: {}", from));
+            return Err(format!("Arista referencia nodo desconocido: {}", from));
         }
         if !node_map.contains_key(to) {
-            return Err(format!("Edge references unknown node: {}", to));
+            return Err(format!("Arista referencia nodo desconocido: {}", to));
         }
 
         dependencies.get_mut(to).unwrap().push(from.clone());
         dependents.get_mut(from).unwrap().push(to.clone());
     }
 
-    // Topological sort to determine execution order
+    // Ordenamiento topológico para determinar orden de ejecución
     let mut stages = Vec::new();
     let mut visited = HashSet::new();
     let mut in_progress = HashSet::new();
@@ -71,7 +71,7 @@ pub fn parse_dag(dag: &Dag) -> Result<Vec<TaskStage>, String> {
     Ok(stages)
 }
 
-/// Topological sort helper
+/// Ayudante de ordenamiento topológico
 fn topological_sort(
     node_id: &str,
     node_map: &HashMap<String, &DagNode>,
@@ -81,7 +81,7 @@ fn topological_sort(
     stages: &mut Vec<TaskStage>,
 ) -> Result<(), String> {
     if in_progress.contains(node_id) {
-        return Err(format!("Cycle detected in DAG at node: {}", node_id));
+        return Err(format!("Ciclo detectado en DAG en el nodo: {}", node_id));
     }
 
     if visited.contains(node_id) {
@@ -90,7 +90,7 @@ fn topological_sort(
 
     in_progress.insert(node_id.to_string());
 
-    // Process dependencies first
+    // Procesar dependencias primero
     if let Some(deps) = dependencies.get(node_id) {
         for dep_id in deps {
             topological_sort(dep_id, node_map, dependencies, visited, in_progress, stages)?;
@@ -100,10 +100,10 @@ fn topological_sort(
     in_progress.remove(node_id);
     visited.insert(node_id.to_string());
 
-    // Create stage for this node
+    // Crear etapa para este nodo
     let node = node_map
         .get(node_id)
-        .ok_or_else(|| format!("Node not found: {}", node_id))?;
+        .ok_or_else(|| format!("Nodo no encontrado: {}", node_id))?;
 
     let stage = TaskStage {
         node_id: node.id.clone(),
@@ -122,7 +122,7 @@ fn topological_sort(
     Ok(())
 }
 
-/// Get root nodes (nodes with no dependencies)
+/// Obtener nodos raíz (nodos sin dependencias)
 pub fn get_root_nodes(dag: &Dag) -> Vec<String> {
     let mut has_dependencies: HashSet<String> = HashSet::new();
 
@@ -137,7 +137,7 @@ pub fn get_root_nodes(dag: &Dag) -> Vec<String> {
         .collect()
 }
 
-/// Get leaf nodes (nodes with no dependents)
+/// Obtener nodos hoja (nodos sin dependientes)
 pub fn get_leaf_nodes(dag: &Dag) -> Vec<String> {
     let mut has_dependents: HashSet<String> = HashSet::new();
 
@@ -209,7 +209,7 @@ mod tests {
             ],
             edges: vec![
                 DagEdge("a".to_string(), "b".to_string()),
-                DagEdge("b".to_string(), "a".to_string()), // Cycle!
+                DagEdge("b".to_string(), "a".to_string()), // ¡Ciclo!
             ],
         };
 

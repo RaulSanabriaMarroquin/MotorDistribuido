@@ -293,3 +293,61 @@ Componentes del Master:
 - Los mecanismos de comunicación HTTP/JSON establecidos se mantendrán y extenderán
 - El sistema de detección de fallos será crucial para la tolerancia a fallos en Semana 4
 
+---
+
+## Gestión de Memoria y Almacenamiento
+
+### Cache con Spill a Disco (Batch)
+
+El sistema implementa un mecanismo de cache con spill automático a disco para optimizar el uso de memoria según la sección 4.3 del enunciado.
+
+#### Arquitectura del Cache
+
+- **Ubicación**: Módulo `worker/src/cache.rs`
+- **Estrategia**: Cache híbrido en memoria y disco
+- **Umbral configurable**: Variable de entorno `CACHE_THRESHOLD_MB` (default: 100MB)
+
+#### Funcionamiento
+
+1. **Almacenamiento en Memoria**:
+   - Los datos se almacenan inicialmente en memoria (estructura `CacheEntry::InMemory`)
+   - Se mantiene un contador de uso de memoria (`memory_usage_mb`)
+
+2. **Spill a Disco**:
+   - Cuando el uso de memoria supera el umbral configurable, se activa el spill
+   - Los datos se serializan como JSON y se escriben a archivos en el directorio `cache/`
+   - Las entradas se marcan como `CacheEntry::OnDisk` con la ruta del archivo
+
+3. **Recuperación**:
+   - Al recuperar datos, si están en disco, se deserializan desde el archivo
+   - Los datos se mantienen en disco hasta que se limpien explícitamente
+
+#### Configuración
+
+```bash
+# Configurar umbral de cache (en MB)
+export CACHE_THRESHOLD_MB=200
+```
+
+#### Ventajas
+
+- **Eficiencia**: Permite procesar datasets grandes sin agotar la memoria
+- **Flexibilidad**: Umbral configurable según recursos disponibles
+- **Persistencia**: Los datos en disco sobreviven a reinicios del worker
+
+### Gestión de Memoria en el Master
+
+El master mantiene el estado en memoria usando estructuras concurrentes:
+
+- **Registry de Workers**: `HashMap<String, WorkerInfo>` con `RwLock` para acceso concurrente
+- **Jobs**: `HashMap<String, JobInfo>` con tracking de tareas y resultados
+- **Tasks**: Registro global de tareas para seguimiento y replanificación
+
+**Nota**: Según la sección 4.1 del enunciado, se requiere persistencia en archivos o sqlite. Actualmente el estado se mantiene solo en memoria. Para producción, se recomendaría implementar persistencia periódica a sqlite.
+
+### Particiones y Shuffle
+
+- **Particiones**: Cada etapa del DAG puede especificar número de particiones
+- **Shuffle**: Entre etapas, los datos se redistribuyen según las particiones configuradas
+- **Balanceo**: Las particiones se distribuyen entre workers disponibles usando round-robin + awareness de carga
+

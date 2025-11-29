@@ -161,6 +161,10 @@ pub struct TaskAssignment {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_path: Option<String>, // Input file path (for read operations)
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub input2: Option<Vec<i64>>, // Second input for join operations
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_path2: Option<String>, // Second input path for join operations
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub attempt_id: Option<usize>, // Task attempt for idempotency (0 = first attempt, 1+ = retries)
 }
 

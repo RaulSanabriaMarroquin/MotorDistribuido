@@ -1,7 +1,6 @@
 //! Metrics structures for observability
 
 use serde::{Deserialize, Serialize};
-use std::time::SystemTime;
 
 /// Node-level metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]

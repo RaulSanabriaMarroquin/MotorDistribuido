@@ -8,11 +8,11 @@ use tracing_subscriber::EnvFilter;
 #[command(name = "cluster-client")]
 #[command(about = "CLI client for the mini distributed system")]
 struct Cli {
-    /// Base URL of the master
+    /// URL base del master
     #[arg(long, default_value = "http://127.0.0.1:8080")]
     master_url: String,
 
-    /// Enable Claude Haiku 4.5
+    /// Habilitar Claude Haiku 4.5
     #[arg(long)]
     enable_claude_haiku: bool,
 
@@ -22,26 +22,26 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// List registered workers
+    /// Listar workers registrados
     ListWorkers,
-    /// Submit a job for execution
+    /// Enviar un job para ejecución
     SubmitJob {
-        /// Job name
+        /// Nombre del job
         #[arg(long)]
         name: String,
-        /// Operation: map_add, map_mul, filter_gt, filter_lt
+        /// Operación: map_add, map_mul, filter_gt, filter_lt
         #[arg(long)]
         operation: String,
-        /// Parameter for the operation
+        /// Parámetro para la operación
         #[arg(long)]
         param: Option<i64>,
-        /// Input data (comma-separated integers)
+        /// Datos de entrada (enteros separados por comas)
         #[arg(long)]
         input: String,
     },
-    /// Get job progress
+    /// Obtener progreso del job
     GetProgress {
-        /// Job ID
+        /// ID del job
         #[arg(long)]
         job_id: String,
     },
@@ -55,11 +55,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cli = Cli::parse();
 
-    // Check for ENABLE_CLAUDE_HAIKU env var as fallback
+    // Verificar variable de entorno ENABLE_CLAUDE_HAIKU como respaldo
     let enable_claude = cli.enable_claude_haiku || env::var("ENABLE_CLAUDE_HAIKU").is_ok();
 
     if enable_claude {
-        info!("Claude Haiku 4.5 enabled for all requests");
+        info!("Claude Haiku 4.5 habilitado para todas las solicitudes");
     }
 
     match cli.command {
@@ -93,7 +93,7 @@ async fn list_workers(
     enable_claude: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let url = format!("{}/api/v1/workers", master_url);
-    info!(%url, "Requesting worker list");
+    info!(%url, "Solicitando lista de workers");
 
     let mut req = reqwest::Client::new().get(&url);
     if enable_claude {
@@ -102,15 +102,15 @@ async fn list_workers(
 
     let resp = req.send().await?;
     if !resp.status().is_success() {
-        eprintln!("Request failed with status {}", resp.status());
+        eprintln!("Solicitud falló con estado {}", resp.status());
         return Ok(());
     }
 
     let body: WorkersListResponse = resp.json().await?;
 
-    println!("Workers (version {}):", body.version);
+    println!("Workers (versión {}):", body.version);
     if body.workers.is_empty() {
-        println!("  (no workers registered)");
+        println!("  (no hay workers registrados)");
     } else {
         for WorkerListItem {
             id,
@@ -139,9 +139,9 @@ async fn submit_job(
     enable_claude: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let url = format!("{}/api/v1/jobs/submit", master_url);
-    info!(%url, "Submitting job: {}", name);
+    info!(%url, "Enviando job: {}", name);
 
-    // Parse input
+    // Analizar entrada
     let input: Vec<i64> = input_str
         .split(',')
         .map(|s| s.trim().parse::<i64>())
@@ -163,14 +163,14 @@ async fn submit_job(
 
     let resp = req.send().await?;
     if !resp.status().is_success() {
-        eprintln!("Request failed with status {}", resp.status());
+        eprintln!("Solicitud falló con estado {}", resp.status());
         return Ok(());
     }
 
     let body: SubmitJobResponse = resp.json().await?;
-    println!("Job submitted successfully!");
-    println!("Job ID: {}", body.job_id);
-    println!("Message: {}", body.message);
+    println!("¡Job enviado exitosamente!");
+    println!("ID del Job: {}", body.job_id);
+    println!("Mensaje: {}", body.message);
 
     Ok(())
 }
@@ -181,7 +181,7 @@ async fn get_progress(
     enable_claude: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let url = format!("{}/api/v1/jobs/{}/progress", master_url, job_id);
-    info!(%url, "Getting job progress");
+    info!(%url, "Obteniendo progreso del job");
 
     let mut req = reqwest::Client::new().get(&url);
     if enable_claude {
@@ -190,16 +190,16 @@ async fn get_progress(
 
     let resp = req.send().await?;
     if !resp.status().is_success() {
-        eprintln!("Request failed with status {}", resp.status());
+        eprintln!("Solicitud falló con estado {}", resp.status());
         return Ok(());
     }
 
     let body: JobProgress = resp.json().await?;
-    println!("Job Progress for: {}", body.job_id);
-    println!("Name: {}", body.name);
-    println!("Status: {}", body.status);
-    println!("Progress: {}/{}", body.completed_tasks, body.total_tasks);
-    println!("Failed: {}", body.failed_tasks);
+    println!("Progreso del Job para: {}", body.job_id);
+    println!("Nombre: {}", body.name);
+    println!("Estado: {}", body.status);
+    println!("Progreso: {}/{}", body.completed_tasks, body.total_tasks);
+    println!("Fallidos: {}", body.failed_tasks);
 
     Ok(())
 }
