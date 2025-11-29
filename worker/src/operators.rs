@@ -335,5 +335,130 @@ mod tests {
         assert_eq!(result.get(&3), Some(&3));
         assert_eq!(result.get(&4), Some(&4));
     }
+
+    #[test]
+    fn test_map_mul() {
+        let input = vec![1, 2, 3, 4, 5];
+        let result = map(&input, Some("mul"), Some(2)).unwrap();
+        assert_eq!(result, vec![2, 4, 6, 8, 10]);
+    }
+
+    #[test]
+    fn test_map_default() {
+        let input = vec![1, 2, 3];
+        let result = map(&input, None, Some(5)).unwrap();
+        assert_eq!(result, vec![6, 7, 8]);
+    }
+
+    #[test]
+    fn test_map_unknown_function() {
+        let input = vec![1, 2, 3];
+        let result = map(&input, Some("unknown"), None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_flat_map_tokenize() {
+        let input = vec![123, 456];
+        let result = flat_map(&input, Some("tokenize")).unwrap();
+        assert_eq!(result.len(), 6);
+    }
+
+    #[test]
+    fn test_flat_map_default() {
+        let input = vec![123];
+        let result = flat_map(&input, None).unwrap();
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_filter_lt() {
+        let input = vec![1, 2, 3, 4, 5];
+        let result = filter(&input, Some("lt"), Some(3)).unwrap();
+        assert_eq!(result, vec![1, 2]);
+    }
+
+    #[test]
+    fn test_filter_eq() {
+        let input = vec![1, 2, 3, 2, 1];
+        let result = filter(&input, Some("eq"), Some(2)).unwrap();
+        assert_eq!(result, vec![2, 2]);
+    }
+
+    #[test]
+    fn test_filter_empty_result() {
+        let input = vec![1, 2, 3];
+        let result = filter(&input, Some("gt"), Some(10)).unwrap();
+        assert_eq!(result, Vec::<i64>::new());
+    }
+
+    #[test]
+    fn test_reduce_by_key_count() {
+        let input = vec![1, 1, 2, 2, 2];
+        let result = reduce_by_key(&input, Some("count")).unwrap();
+        assert_eq!(result.get(&1), Some(&2));
+        assert_eq!(result.get(&2), Some(&3));
+    }
+
+    #[test]
+    fn test_reduce_by_key_max() {
+        let input = vec![1, 2, 1, 3, 2];
+        let result = reduce_by_key(&input, Some("max")).unwrap();
+        assert_eq!(result.get(&1), Some(&1));
+        assert_eq!(result.get(&2), Some(&2));
+        assert_eq!(result.get(&3), Some(&3));
+    }
+
+    #[test]
+    fn test_reduce_by_key_min() {
+        let input = vec![5, 3, 5, 2, 3];
+        let result = reduce_by_key(&input, Some("min")).unwrap();
+        // Para reduce_by_key, la clave es el valor mismo
+        // Clave 2: aparece 1 vez, mínimo = 2
+        // Clave 3: aparece 2 veces (3, 3), mínimo = 3
+        // Clave 5: aparece 2 veces (5, 5), mínimo = 5
+        assert_eq!(result.get(&2), Some(&2));
+        assert_eq!(result.get(&3), Some(&3));
+        assert_eq!(result.get(&5), Some(&5));
+    }
+
+    #[test]
+    fn test_reduce_by_key_empty() {
+        let input = vec![];
+        let result = reduce_by_key(&input, Some("sum")).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_join_basic() {
+        let left = vec![1, 2, 3];
+        let right = vec![2, 3, 4];
+        let result = join(&left, &right, None).unwrap();
+        assert_eq!(result.len(), 2); // Solo 2 y 3 coinciden
+    }
+
+    #[test]
+    fn test_join_no_matches() {
+        let left = vec![1, 2, 3];
+        let right = vec![4, 5, 6];
+        let result = join(&left, &right, None).unwrap();
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn test_join_empty() {
+        let left = vec![];
+        let right = vec![1, 2, 3];
+        let result = join(&left, &right, None).unwrap();
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn test_join_duplicates() {
+        let left = vec![1, 1, 2];
+        let right = vec![1, 2, 2];
+        let result = join(&left, &right, None).unwrap();
+        assert!(result.len() >= 2);
+    }
 }
 

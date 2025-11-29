@@ -1,5 +1,5 @@
-C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\target\debug\build\parking_lot_core-d3120e8d33c8aa2d\build_script_build-d3120e8d33c8aa2d.d: C:\Users\Raul\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\parking_lot_core-0.9.12\build.rs
+C:\Users\USUARIO\Documents\Github\MotorDistribuido\target\debug\build\parking_lot_core-d3120e8d33c8aa2d\build_script_build-d3120e8d33c8aa2d.d: C:\Users\USUARIO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\parking_lot_core-0.9.12\build.rs
 
-C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\target\debug\build\parking_lot_core-d3120e8d33c8aa2d\build_script_build-d3120e8d33c8aa2d.exe: C:\Users\Raul\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\parking_lot_core-0.9.12\build.rs
+C:\Users\USUARIO\Documents\Github\MotorDistribuido\target\debug\build\parking_lot_core-d3120e8d33c8aa2d\build_script_build-d3120e8d33c8aa2d.exe: C:\Users\USUARIO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\parking_lot_core-0.9.12\build.rs
 
-C:\Users\Raul\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\parking_lot_core-0.9.12\build.rs:
+C:\Users\USUARIO\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\parking_lot_core-0.9.12\build.rs:

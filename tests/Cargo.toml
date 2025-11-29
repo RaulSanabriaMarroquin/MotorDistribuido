@@ -1,0 +1,16 @@
+[package]
+name = "integration-tests"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "integration_test"
+path = "integration_test.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+reqwest = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+common = { path = "../common" }
+
