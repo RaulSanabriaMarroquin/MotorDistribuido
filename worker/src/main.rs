@@ -25,8 +25,11 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Configurar logging: si RUST_LOG no está configurado, usar "info" por defecto
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
+        .with_env_filter(filter)
         .init();
 
     // Config desde env
@@ -47,10 +50,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let http_client = Client::new();
 
     // 1) Registro en el master
+    // Generar un worker_id temporal (el master puede asignar uno nuevo)
+    let temp_worker_id = format!("worker-{}", uuid::Uuid::new_v4());
     let register_req = RegisterRequest {
-        version: Some(MESSAGE_VERSION.to_string()),
+        worker_id: temp_worker_id,
         host: host.clone(),
         port,
+        version: MESSAGE_VERSION.to_string(),
     };
 
     let register_url = format!("{}/api/v1/workers/register", master_url);
@@ -107,6 +113,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .as_secs();
 
             let hb_req = HeartbeatRequest {
+                worker_id: hb_worker_id.clone(),
+                active_tasks: 0, // TODO: rastrear tareas activas
                 version: Some(MESSAGE_VERSION.to_string()),
                 timestamp: Some(now),
             };
@@ -132,8 +140,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(unix)]
         {
             use tokio::signal::unix::{signal, SignalKind};
-            let mut sigterm = signal(SignalKind::terminate()).ok();
-            let mut sigint = signal(SignalKind::interrupt()).ok();
+            let sigterm = signal(SignalKind::terminate()).ok();
+            let sigint = signal(SignalKind::interrupt()).ok();
             
             tokio::select! {
                 _ = async {
@@ -159,14 +167,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut ctrl_break_stream = ctrl_break().ok();
             tokio::select! {
                 _ = async {
-                    if let Some(mut stream) = ctrl_c_stream {
+                    if let Some(stream) = &mut ctrl_c_stream {
                         stream.recv().await
                     } else {
                         futures::future::pending().await
                     }
                 } => {},
                 _ = async {
-                    if let Some(mut stream) = ctrl_break_stream {
+                    if let Some(stream) = &mut ctrl_break_stream {
                         stream.recv().await
                     } else {
                         futures::future::pending().await
@@ -180,7 +188,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     
     tokio::spawn(async move {
         shutdown_signal.await;
@@ -220,19 +228,53 @@ async fn execute_task(
     let input_data = if let Some(ref input_path) = payload.input_path {
         // Leer desde archivo basado en extensión
         if input_path.ends_with(".csv") {
-            read_csv(input_path)
-                .await
-                .map_err(|e| {
-                    error!("Error al leer CSV: {}", e);
-                    axum::http::StatusCode::INTERNAL_SERVER_ERROR
-                })?
+            match read_csv(input_path).await {
+                Ok(data) => data,
+                Err(e) => {
+                    error!("Error al leer CSV {}: {}", input_path, e);
+                    // Enviar error al master antes de retornar
+                    let error_result = TaskResult {
+                        job_id: payload.job_id.clone(),
+                        task_id: payload.task_id.clone(),
+                        attempt_id: payload.attempt_id.unwrap_or(0),
+                        success: false,
+                        node_id: Some(payload.node_id.clone()),
+                        result: None,
+                        result_path: None,
+                        output: None,
+                        output_data: None,
+                        output_path: None,
+                        error: Some(format!("Error al leer CSV {}: {}", input_path, e)),
+                    };
+                    let result_url = format!("{}/api/v1/jobs/{}/task_result", master_url, payload.job_id);
+                    let _ = http_client.post(&result_url).json(&error_result).send().await;
+                    return Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+                }
+            }
         } else if input_path.ends_with(".jsonl") {
-            read_jsonl(input_path)
-                .await
-                .map_err(|e| {
-                    error!("Error al leer JSONL: {}", e);
-                    axum::http::StatusCode::INTERNAL_SERVER_ERROR
-                })?
+            match read_jsonl(input_path).await {
+                Ok(data) => data,
+                Err(e) => {
+                    error!("Error al leer JSONL {}: {}", input_path, e);
+                    // Enviar error al master antes de retornar
+                    let error_result = TaskResult {
+                        job_id: payload.job_id.clone(),
+                        task_id: payload.task_id.clone(),
+                        attempt_id: payload.attempt_id.unwrap_or(0),
+                        success: false,
+                        node_id: Some(payload.node_id.clone()),
+                        result: None,
+                        result_path: None,
+                        output: None,
+                        output_data: None,
+                        output_path: None,
+                        error: Some(format!("Error al leer JSONL {}: {}", input_path, e)),
+                    };
+                    let result_url = format!("{}/api/v1/jobs/{}/task_result", master_url, payload.job_id);
+                    let _ = http_client.post(&result_url).json(&error_result).send().await;
+                    return Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+                }
+            }
         } else {
             return Err(axum::http::StatusCode::BAD_REQUEST);
         }
@@ -423,12 +465,14 @@ async fn execute_task(
     let task_result = TaskResult {
         job_id: payload.job_id.clone(),
         task_id: payload.task_id.clone(),
-        node_id: payload.node_id.clone(),
         attempt_id,
-        output: output.clone(),
-        output_path,
-        output_data: output_data.clone(),
         success: true,
+        node_id: Some(payload.node_id.clone()),
+        result: output.clone(),
+        result_path: output_path.clone(),
+        output: output.clone(),
+        output_data: output_data.clone(),
+        output_path,
         error: None,
     };
 

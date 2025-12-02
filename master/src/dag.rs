@@ -1,7 +1,7 @@
 //! Análisis de DAG y generación de tareas
 //! Procesa la estructura DAG de la especificación del job y crea tareas
 
-use common::{Dag, DagEdge, DagNode};
+use common::{Dag, DagNode};
 use std::collections::{HashMap, HashSet};
 
 /// Representa una etapa de tarea en la ejecución del DAG

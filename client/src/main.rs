@@ -108,7 +108,7 @@ async fn list_workers(
 
     let body: WorkersListResponse = resp.json().await?;
 
-    println!("Workers (versión {}):", body.version);
+    println!("Workers registrados:");
     if body.workers.is_empty() {
         println!("  (no hay workers registrados)");
     } else {
@@ -117,12 +117,17 @@ async fn list_workers(
             host,
             port,
             status,
-            last_heartbeat,
+            active_tasks,
+            last_heartbeat: _,
         } in body.workers
         {
+            let status_str = match status {
+                common::WorkerStatus::Up => "UP",
+                common::WorkerStatus::Down => "DOWN",
+            };
             println!(
-                "- {} @ {}:{} [{}] last_heartbeat={:?}",
-                id, host, port, status, last_heartbeat
+                "- {} @ {}:{} [{}] tareas activas: {}",
+                id, host, port, status_str, active_tasks
             );
         }
     }
@@ -152,6 +157,7 @@ async fn submit_job(
         dag: None,
         parallelism: None,
         operation: Some(operation.to_string()),
+        fn_name: None,
         param,
         input: Some(input),
     };
@@ -195,8 +201,7 @@ async fn get_progress(
     }
 
     let body: JobProgress = resp.json().await?;
-    println!("Progreso del Job para: {}", body.job_id);
-    println!("Nombre: {}", body.name);
+    println!("Progreso del Job: {}", body.job_id);
     println!("Estado: {}", body.status);
     println!("Progreso: {}/{}", body.completed_tasks, body.total_tasks);
     println!("Fallidos: {}", body.failed_tasks);

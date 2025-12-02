@@ -303,8 +303,6 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -2202,6 +2200,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

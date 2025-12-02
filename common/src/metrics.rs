@@ -1,37 +1,38 @@
-//! Metrics structures for observability
+//! Estructuras para métricas del sistema
 
 use serde::{Deserialize, Serialize};
 
-/// Node-level metrics
+/// Métricas de un nodo (worker)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeMetrics {
     pub node_id: String,
-    pub cpu_usage_percent: f64, // Approximate CPU usage
-    pub memory_usage_mb: f64,  // Memory usage in MB
-    pub active_tasks: usize,   // Number of active tasks
-    pub avg_latency_ms: f64,    // Average task latency in milliseconds
-    pub retry_count: usize,     // Number of retries
-    pub timestamp: u64,         // Unix timestamp
+    pub cpu_usage_percent: f64,        // Porcentaje de CPU (0-100)
+    pub memory_usage_mb: f64,          // Uso de memoria en MB
+    pub active_tasks: usize,           // Número de tareas activas
+    pub avg_latency_ms: f64,           // Latencia promedio en milisegundos
+    pub retry_count: usize,            // Número de reintentos
+    pub timestamp: u64,                // Timestamp Unix
 }
 
-/// Job/Topology-level metrics
+/// Métricas de un job
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobMetrics {
     pub job_id: String,
     pub name: String,
-    pub total_time_secs: f64,   // Total execution time
-    pub stages: usize,           // Number of stages
-    pub throughput_events_per_sec: Option<f64>, // For streaming
-    pub failure_count: usize,    // Number of failures
-    pub start_time: u64,         // Unix timestamp
-    pub end_time: Option<u64>,   // Unix timestamp (None if still running)
+    pub total_time_secs: f64,          // Tiempo total en segundos
+    pub stages: usize,                 // Número de etapas
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub throughput_events_per_sec: Option<f64>, // Para streaming
+    pub failure_count: usize,          // Número de fallos
+    pub start_time: u64,               // Timestamp Unix de inicio
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_time: Option<u64>,         // Timestamp Unix de fin
 }
 
-/// Metrics response
-#[derive(Debug, Serialize, Deserialize)]
+/// Respuesta con todas las métricas
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricsResponse {
-    pub version: String,
-    pub node_metrics: Option<Vec<NodeMetrics>>,
-    pub job_metrics: Option<Vec<JobMetrics>>,
+    pub node_metrics: Vec<NodeMetrics>,
+    pub job_metrics: Vec<JobMetrics>,
 }
 

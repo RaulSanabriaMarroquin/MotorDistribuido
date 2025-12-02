@@ -8,6 +8,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 // Umbral configurable (según especificación sección 4.3)
 // Puede establecerse mediante variable de entorno CACHE_THRESHOLD_MB, por defecto 100MB
+#[allow(dead_code)]
 fn get_cache_threshold_mb() -> usize {
     std::env::var("CACHE_THRESHOLD_MB")
         .ok()
@@ -15,16 +16,19 @@ fn get_cache_threshold_mb() -> usize {
         .unwrap_or(100)
 }
 
+#[allow(dead_code)]
 const CACHE_DIR: &str = "cache";
 
 /// Entrada de caché que puede estar en memoria o en disco
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum CacheEntry {
     InMemory(Vec<i64>),
     OnDisk(PathBuf),
 }
 
 /// Administrador de caché con derrame a disco
+#[allow(dead_code)]
 pub struct Cache {
     entries: HashMap<String, CacheEntry>,
     memory_usage_mb: usize,
@@ -32,6 +36,7 @@ pub struct Cache {
 }
 
 impl Cache {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         let cache_dir = PathBuf::from(CACHE_DIR);
         Self {
@@ -42,6 +47,7 @@ impl Cache {
     }
 
     /// Almacenar datos en caché (derramar a disco si es necesario)
+    #[allow(dead_code)]
     pub async fn store(&mut self, key: &str, data: Vec<i64>) -> Result<(), String> {
         let threshold_mb = get_cache_threshold_mb();
         let size_mb = (data.len() * std::mem::size_of::<i64>()) / (1024 * 1024);
@@ -65,6 +71,7 @@ impl Cache {
     }
 
     /// Recuperar datos del caché
+    #[allow(dead_code)]
     pub async fn retrieve(&self, key: &str) -> Result<Option<Vec<i64>>, String> {
         match self.entries.get(key) {
             Some(CacheEntry::InMemory(data)) => Ok(Some(data.clone())),
@@ -76,6 +83,7 @@ impl Cache {
     }
 
     /// Almacenar datos en disco
+    #[allow(dead_code)]
     async fn store_to_disk(&self, key: &str, data: &[i64]) -> Result<PathBuf, String> {
         // Crear directorio de caché si no existe
         fs::create_dir_all(&self.cache_dir)
@@ -103,6 +111,7 @@ impl Cache {
     }
 
     /// Cargar datos desde disco
+    #[allow(dead_code)]
     async fn load_from_disk(&self, path: &Path) -> Result<Option<Vec<i64>>, String> {
         let mut file = fs::File::open(path)
             .await
@@ -120,6 +129,7 @@ impl Cache {
     }
 
     /// Derramar entradas existentes en memoria a disco
+    #[allow(dead_code)]
     async fn spill_to_disk(&mut self) -> Result<(), String> {
         let mut keys_to_spill = Vec::new();
         
@@ -144,6 +154,7 @@ impl Cache {
     }
 
     /// Limpiar caché
+    #[allow(dead_code)]
     pub async fn clear(&mut self) -> Result<(), String> {
         // Eliminar archivos de disco
         for entry in self.entries.values() {

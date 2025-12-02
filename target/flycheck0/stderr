@@ -1,12 +1,35 @@
-   0.248780500s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\USUARIO\Documents\Github\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint: stale: changed "C:\\Users\\USUARIO\\Documents\\Github\\MotorDistribuido\\master\\src\\dag.rs"
-   0.248811700s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\USUARIO\Documents\Github\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint:           (vs) "C:\\Users\\USUARIO\\Documents\\Github\\MotorDistribuido\\target\\debug\\.fingerprint\\master-268b2be0b4a847e0\\dep-bin-master"
-   0.248817500s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\USUARIO\Documents\Github\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint:                FileTime { seconds: 13408918246, nanos: 13911500 } < FileTime { seconds: 13408918273, nanos: 252307700 }
-   0.249105200s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\USUARIO\Documents\Github\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint: fingerprint dirty for master v0.1.0 (C:\Users\USUARIO\Documents\Github\MotorDistribuido\master)/Check { test: false }/TargetInner { name: "master", doc: true, ..: with_path("C:\\Users\\USUARIO\\Documents\\Github\\MotorDistribuido\\master\\src\\main.rs", Edition2021) }
-   0.249127600s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\USUARIO\Documents\Github\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleItem(ChangedFile { reference: "C:\\Users\\USUARIO\\Documents\\Github\\MotorDistribuido\\target\\debug\\.fingerprint\\master-268b2be0b4a847e0\\dep-bin-master", reference_mtime: FileTime { seconds: 13408918246, nanos: 13911500 }, stale: "C:\\Users\\USUARIO\\Documents\\Github\\MotorDistribuido\\master\\src\\dag.rs", stale_mtime: FileTime { seconds: 13408918273, nanos: 252307700 } }))
-   0.273134800s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\USUARIO\Documents\Github\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint: stale: changed "C:\\Users\\USUARIO\\Documents\\Github\\MotorDistribuido\\master\\src\\dag.rs"
-   0.273158000s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\USUARIO\Documents\Github\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint:           (vs) "C:\\Users\\USUARIO\\Documents\\Github\\MotorDistribuido\\target\\debug\\.fingerprint\\master-d8a94ba0969beecf\\dep-test-bin-master"
-   0.273162400s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\USUARIO\Documents\Github\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint:                FileTime { seconds: 13408918014, nanos: 650640400 } < FileTime { seconds: 13408918273, nanos: 252307700 }
-   0.273270200s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\USUARIO\Documents\Github\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint: fingerprint dirty for master v0.1.0 (C:\Users\USUARIO\Documents\Github\MotorDistribuido\master)/Check { test: true }/TargetInner { name: "master", doc: true, ..: with_path("C:\\Users\\USUARIO\\Documents\\Github\\MotorDistribuido\\master\\src\\main.rs", Edition2021) }
-   0.273285700s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\USUARIO\Documents\Github\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleItem(ChangedFile { reference: "C:\\Users\\USUARIO\\Documents\\Github\\MotorDistribuido\\target\\debug\\.fingerprint\\master-d8a94ba0969beecf\\dep-test-bin-master", reference_mtime: FileTime { seconds: 13408918014, nanos: 650640400 }, stale: "C:\\Users\\USUARIO\\Documents\\Github\\MotorDistribuido\\master\\src\\dag.rs", stale_mtime: FileTime { seconds: 13408918273, nanos: 252307700 } }))
+   0.441130000s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\USUARIO\Documents\Github\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint: stale: changed "C:\\Users\\USUARIO\\Documents\\Github\\MotorDistribuido\\master\\src\\main.rs"
+   0.441214400s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\USUARIO\Documents\Github\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint:           (vs) "C:\\Users\\USUARIO\\Documents\\Github\\MotorDistribuido\\target\\debug\\.fingerprint\\master-a6eb94d3e7f5c312\\dep-bin-master"
+   0.441223800s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\USUARIO\Documents\Github\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint:                FileTime { seconds: 13409116040, nanos: 835239400 } < FileTime { seconds: 13409116078, nanos: 886167000 }
+   0.442145900s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\USUARIO\Documents\Github\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint: fingerprint dirty for master v0.1.0 (C:\Users\USUARIO\Documents\Github\MotorDistribuido\master)/Check { test: false }/TargetInner { name: "master", doc: true, ..: with_path("C:\\Users\\USUARIO\\Documents\\Github\\MotorDistribuido\\master\\src\\main.rs", Edition2021) }
+   0.442561500s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\USUARIO\Documents\Github\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleItem(ChangedFile { reference: "C:\\Users\\USUARIO\\Documents\\Github\\MotorDistribuido\\target\\debug\\.fingerprint\\master-a6eb94d3e7f5c312\\dep-bin-master", reference_mtime: FileTime { seconds: 13409116040, nanos: 835239400 }, stale: "C:\\Users\\USUARIO\\Documents\\Github\\MotorDistribuido\\master\\src\\main.rs", stale_mtime: FileTime { seconds: 13409116078, nanos: 886167000 } }))
+   0.499092000s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\USUARIO\Documents\Github\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint: fingerprint error for master v0.1.0 (C:\Users\USUARIO\Documents\Github\MotorDistribuido\master)/Check { test: true }/TargetInner { name: "master", doc: true, ..: with_path("C:\\Users\\USUARIO\\Documents\\Github\\MotorDistribuido\\master\\src\\main.rs", Edition2021) }
+   0.499120600s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\USUARIO\Documents\Github\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\Users\USUARIO\Documents\Github\MotorDistribuido\target\debug\.fingerprint\master-41d09eb6639aa493\test-bin-master`
+
+Caused by:
+    The system cannot find the file specified. (os error 2)
+
+Stack backtrace:
+   0: git_midx_writer_dump
+   1: git_midx_writer_dump
+   2: git_midx_writer_dump
+   3: git_midx_writer_dump
+   4: git_filter_source_repo
+   5: git_filter_source_path
+   6: git_filter_source_path
+   7: git_filter_source_path
+   8: git_filter_source_path
+   9: git_filter_source_repo
+  10: git_filter_source_repo
+  11: git_filter_source_repo
+  12: git_filter_source_repo
+  13: git_filter_source_repo
+  14: <unknown>
+  15: <unknown>
+  16: git_midx_writer_dump
+  17: git_filter_source_repo
+  18: git_midx_writer_dump
+  19: BaseThreadInitThunk
+  20: RtlUserThreadStart
     Checking master v0.1.0 (C:\Users\USUARIO\Documents\Github\MotorDistribuido\master)
-error: could not compile `master` (bin "master" test) due to 3 previous errors; 3 warnings emitted
+error: could not compile `master` (bin "master" test) due to 13 previous errors; 3 warnings emitted

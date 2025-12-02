@@ -187,16 +187,22 @@ pub fn join(
 }
 
 /// Leer archivo CSV y retornar como vector de enteros
-/// Por simplicidad, lee la primera columna como enteros
+/// Soporta dos formatos:
+/// 1. CSV estándar (con comas): lee la primera columna
+/// 2. Formato simple (un número por línea): lee cada línea como entero
 pub async fn read_csv(path: &str) -> Result<Vec<i64>, String> {
     let content = fs::read_to_string(path)
         .await
         .map_err(|e| format!("Error al leer archivo CSV {}: {}", path, e))?;
     
-    let mut reader = csv::Reader::from_reader(content.as_bytes());
     let mut result = Vec::new();
     
+    // Intentar primero como CSV estándar
+    let mut reader = csv::Reader::from_reader(content.as_bytes());
+    let mut has_csv_records = false;
+    
     for record in reader.records() {
+        has_csv_records = true;
         let record = record.map_err(|e| format!("Error al analizar CSV: {}", e))?;
         // Leer primera columna como entero
         if let Some(first_field) = record.get(0) {
@@ -204,6 +210,31 @@ pub async fn read_csv(path: &str) -> Result<Vec<i64>, String> {
                 result.push(value);
             }
         }
+    }
+    
+    // Si no hay registros CSV, intentar como formato simple (un número por línea)
+    if !has_csv_records {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            // Intentar parsear la línea completa como entero
+            if let Ok(value) = trimmed.parse::<i64>() {
+                result.push(value);
+            } else {
+                // Si falla, intentar extraer el primer número de la línea
+                if let Some(first_num) = trimmed.split(',').next() {
+                    if let Ok(value) = first_num.trim().parse::<i64>() {
+                        result.push(value);
+                    }
+                }
+            }
+        }
+    }
+    
+    if result.is_empty() {
+        return Err(format!("No se pudieron extraer números del archivo CSV: {}", path));
     }
     
     Ok(result)

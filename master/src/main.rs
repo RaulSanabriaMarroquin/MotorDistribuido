@@ -72,6 +72,9 @@ struct JobInfo {
     end_time: Option<SystemTime>, // Tiempo de finalización del job
     stages: usize, // Número de etapas en el DAG
     result_paths: Vec<String>, // Rutas a archivos de salida
+    parsed_stages: Option<Vec<dag::TaskStage>>, // Etapas parseadas del DAG
+    stage_results: HashMap<usize, Vec<TaskResult>>, // Resultados por etapa (stage_idx -> resultados)
+    stage_completed_tasks: HashMap<usize, usize>, // Tareas completadas por etapa
 }
 
 /// Estado compartido de la aplicación
@@ -89,8 +92,11 @@ const MAX_TASK_RETRIES: usize = 1; // Al menos 1 reintento según la especificac
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Configurar logging: si RUST_LOG no está configurado, usar "info" por defecto
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(filter)
         .init();
 
     info!("Nodo master iniciando...");
@@ -221,14 +227,12 @@ async fn register_worker(
         payload.host, payload.port
     );
 
-    // Validar versión si se proporciona
-    if let Some(version) = &payload.version {
-        if version != MESSAGE_VERSION {
-            warn!(
-                "Incompatibilidad de versión: esperada {}, recibida {}",
-                MESSAGE_VERSION, version
-            );
-        }
+    // Validar versión
+    if payload.version != MESSAGE_VERSION {
+        warn!(
+            "Incompatibilidad de versión: esperada {}, recibida {}",
+            MESSAGE_VERSION, payload.version
+        );
     }
 
     // Generar ID único de worker
@@ -267,9 +271,10 @@ async fn register_worker(
     }
 
     Ok(Json(RegisterResponse {
-        version: MESSAGE_VERSION.to_string(),
-        worker_id,
+        success: true,
         message: "Registro exitoso".to_string(),
+        worker_id,
+        version: MESSAGE_VERSION.to_string(),
     }))
 }
 
@@ -280,7 +285,7 @@ async fn heartbeat(
     Json(payload): Json<HeartbeatRequest>,
 ) -> Result<Json<HeartbeatResponse>, StatusCode> {
     // Validar versión si se proporciona
-    if let Some(version) = &payload.version {
+    if let Some(ref version) = payload.version {
         if version != MESSAGE_VERSION {
             warn!(
                 "Incompatibilidad de versión: esperada {}, recibida {}",
@@ -310,8 +315,9 @@ async fn heartbeat(
     info!("Heartbeat recibido del worker: {}", worker_id);
 
     Ok(Json(HeartbeatResponse {
-        version: MESSAGE_VERSION.to_string(),
-        status: "ok".to_string(),
+        success: true,
+        version: Some(MESSAGE_VERSION.to_string()),
+        status: Some("ok".to_string()),
     }))
 }
 
@@ -334,7 +340,8 @@ async fn list_workers(
                 id: worker.id.clone(),
                 host: worker.host.clone(),
                 port: worker.port,
-                status: worker.status.as_str().to_string(),
+                status: worker.status,
+                active_tasks: worker.active_tasks,
                 last_heartbeat: last_heartbeat_secs,
             }
         })
@@ -343,8 +350,8 @@ async fn list_workers(
     info!("Listados {} workers", workers.len());
 
     Ok(Json(WorkersListResponse {
-        version: MESSAGE_VERSION.to_string(),
         workers,
+        version: Some(MESSAGE_VERSION.to_string()),
     }))
 }
 
@@ -387,147 +394,147 @@ async fn submit_job(
         let parallelism = payload.parallelism.unwrap_or(workers.len());
         let mut task_count = 0;
         let client = Client::new();
-
-        // Despachar tareas para cada etapa
-        for (stage_idx, stage) in stages.iter().enumerate() {
+        
+        // Calcular total de tareas para todas las etapas
+        for stage in &stages {
             let num_tasks = stage.partitions.unwrap_or(parallelism);
             task_count += num_tasks;
+        }
 
-            for task_idx in 0..num_tasks {
-                // Round-robin + awareness de carga (según especificación sección 4.1 y 7)
-                // Primero usar round-robin, pero considerar carga (active_tasks) al seleccionar
-                let worker = {
-                    let registry = state.registry.read().await;
-                    let available_workers: Vec<_> = registry
-                        .values()
-                        .filter(|w| w.status == WorkerStatus::Up)
-                        .cloned()
-                        .collect();
-                    
-                    if available_workers.is_empty() {
-                        return Err(StatusCode::SERVICE_UNAVAILABLE);
-                    }
-                    
-                    // Round-robin: ciclo a través de workers
-                    let round_robin_idx = task_idx % available_workers.len();
-                    let round_robin_worker = &available_workers[round_robin_idx];
-                    
-                    // Awareness de carga: si el worker de round-robin tiene carga alta, encontrar uno con menos carga
-                    // Umbral: si el worker de round-robin tiene >2x carga promedio, usar balanceo de carga
-                    let avg_load: usize = available_workers.iter()
-                        .map(|w| w.active_tasks)
-                        .sum::<usize>() / available_workers.len().max(1);
-                    
-                    if round_robin_worker.active_tasks > avg_load * 2 && avg_load > 0 {
-                        // Usar balanceo de carga en su lugar
-                        available_workers
-                            .iter()
-                            .min_by_key(|w| w.active_tasks)
-                            .unwrap()
-                            .clone()
-                    } else {
-                        // Usar round-robin
-                        round_robin_worker.clone()
-                    }
-                };
+        // Solo despachar la primera etapa (etapas sin dependencias)
+        // Las etapas siguientes se despacharán cuando las anteriores completen
+        let first_stage_idx = 0;
+        let first_stage = &stages[first_stage_idx];
+        let num_tasks = first_stage.partitions.unwrap_or(parallelism);
+
+        for task_idx in 0..num_tasks {
+            // Round-robin + awareness de carga (según especificación sección 4.1 y 7)
+            // Primero usar round-robin, pero considerar carga (active_tasks) al seleccionar
+            let selected_worker = {
+                let registry = state.registry.read().await;
+                let available_workers: Vec<_> = registry
+                    .values()
+                    .filter(|w| w.status == WorkerStatus::Up)
+                    .cloned()
+                    .collect();
                 
-                let task_id = format!("{}-stage{}-task{}", job_id, stage_idx, task_idx);
+                if available_workers.is_empty() {
+                    return Err(StatusCode::SERVICE_UNAVAILABLE);
+                }
                 
-                // Para shuffle: si esta etapa depende de etapas anteriores,
-                // necesitamos pasar información de partición para redistribución de datos
-                let input_path = if stage_idx > 0 && !stage.dependencies.is_empty() {
-                    // Shuffle: datos de la etapa anterior necesitan ser redistribuidos
-                    // En una implementación real, recogeríamos resultados de la etapa anterior
-                    // y redistribuiríamos basado en hash de clave
-                    // Por ahora, usaremos un patrón de ruta que indica shuffle
-                    Some(format!("shuffle/{}/stage{}/partition{}", job_id, stage_idx - 1, task_idx))
+                // Round-robin: ciclo a través de workers
+                let round_robin_idx = task_idx % available_workers.len();
+                let round_robin_worker = &available_workers[round_robin_idx];
+                
+                // Awareness de carga: si el worker de round-robin tiene carga alta, encontrar uno con menos carga
+                // Umbral: si el worker de round-robin tiene >2x carga promedio, usar balanceo de carga
+                let avg_load: usize = available_workers.iter()
+                    .map(|w| w.active_tasks)
+                    .sum::<usize>() / available_workers.len().max(1);
+                
+                if round_robin_worker.active_tasks > avg_load * 2 && avg_load > 0 {
+                    // Usar balanceo de carga en su lugar
+                    available_workers
+                        .iter()
+                        .min_by_key(|w| w.active_tasks)
+                        .unwrap()
+                        .clone()
                 } else {
-                    stage.path.clone()
-                };
-                
-                let task_assignment = TaskAssignment {
-                    job_id: job_id.clone(),
-                    task_id: task_id.clone(),
-                    node_id: stage.node_id.clone(),
-                    operation: stage.operation.clone(),
-                    fn_name: stage.fn_name.clone(),
-                    key: stage.key.clone(),
-                    param: None, // Las operaciones DAG no usan param
-                    input: None, // La entrada vendrá de la etapa anterior o archivo
-                    input_path,
-                    input2: None,
-                    input_path2: None,
-                    attempt_id: Some(0),
-                };
-                
-                // Registrar tarea
-                let task_info = TaskInfo {
-                    task_id: task_id.clone(),
-                    node_id: stage.node_id.clone(),
-                    job_id: job_id.clone(),
-                    worker_id: Some(worker.id.clone()),
-                    attempt_id: 0,
-                    status: TaskStatus::Pending,
-                    assignment: task_assignment.clone(),
-                };
-                
-                {
-                    let mut jobs = state.jobs.write().await;
-                    if let Some(job) = jobs.get_mut(&job_id) {
-                        job.tasks.insert(task_id.clone(), task_info);
-                    }
+                    // Usar round-robin
+                    round_robin_worker.clone()
                 }
-
-                let worker_url = format!(
-                    "http://{}:{}/api/v1/tasks/execute",
-                    worker.host, worker.port
-                );
-
-                let client_clone = client.clone();
-                let task_clone = task_assignment.clone();
-                // Actualizar conteo de tareas activas del worker
-                {
-                    let mut registry = state.registry.write().await;
-                    if let Some(worker_info) = registry.get_mut(&worker.id) {
-                        worker_info.active_tasks += 1;
-                    }
+            };
+            
+            let task_id = format!("{}-stage{}-task{}", job_id, first_stage_idx, task_idx);
+            
+            // Primera etapa: usar path del stage si está disponible
+            let input_path = first_stage.path.clone();
+            
+            let task_assignment = TaskAssignment {
+                job_id: job_id.clone(),
+                task_id: task_id.clone(),
+                node_id: first_stage.node_id.clone(),
+                operation: first_stage.operation.clone(),
+                fn_name: first_stage.fn_name.clone(),
+                key: first_stage.key.clone(),
+                param: None, // Las operaciones DAG no usan param
+                path: first_stage.path.clone(),
+                input: None, // La entrada vendrá de la etapa anterior o archivo
+                input_data: None,
+                input_paths: None,
+                input_path,
+                input2: None,
+                input_path2: None,
+                attempt_id: Some(0),
+            };
+            
+            // Registrar tarea
+            let task_info = TaskInfo {
+                task_id: task_id.clone(),
+                node_id: first_stage.node_id.clone(),
+                job_id: job_id.clone(),
+                worker_id: Some(selected_worker.id.clone()),
+                attempt_id: 0,
+                status: TaskStatus::Pending,
+                assignment: task_assignment.clone(),
+            };
+            
+            {
+                let mut jobs = state.jobs.write().await;
+                if let Some(job) = jobs.get_mut(&job_id) {
+                    job.tasks.insert(task_id.clone(), task_info);
                 }
-                
-                // Actualizar estado de tarea a Running
-                {
-                    let mut jobs = state.jobs.write().await;
-                    if let Some(job) = jobs.get_mut(&job_id) {
-                        if let Some(task) = job.tasks.get_mut(&task_id) {
-                            task.status = TaskStatus::Running;
-                        }
-                    }
-                }
-
-                tokio::spawn(async move {
-                    match client_clone
-                        .post(&worker_url)
-                        .json(&task_clone)
-                        .send()
-                        .await
-                    {
-                        Ok(resp) if resp.status().is_success() => {
-                            info!("Tarea {} despachada al worker {}", task_id, worker_url);
-                        }
-                        Ok(resp) => {
-                            error!(
-                                "Error al despachar tarea {} al worker {}: {}",
-                                task_id, worker_url, resp.status()
-                            );
-                        }
-                        Err(e) => {
-                            error!(
-                                "Error al despachar tarea {} al worker {}: {:?}",
-                                task_id, worker_url, e
-                            );
-                        }
-                    }
-                });
             }
+
+            let worker_url = format!(
+                "http://{}:{}/api/v1/tasks/execute",
+                selected_worker.host, selected_worker.port
+            );
+
+            let client_clone = client.clone();
+            let task_clone = task_assignment.clone();
+            // Actualizar conteo de tareas activas del worker
+            {
+                let mut registry = state.registry.write().await;
+                if let Some(worker_info) = registry.get_mut(&selected_worker.id) {
+                    worker_info.active_tasks += 1;
+                }
+            }
+            
+            // Actualizar estado de tarea a Running
+            {
+                let mut jobs = state.jobs.write().await;
+                if let Some(job) = jobs.get_mut(&job_id) {
+                    if let Some(task) = job.tasks.get_mut(&task_id) {
+                        task.status = TaskStatus::Running;
+                    }
+                }
+            }
+
+            tokio::spawn(async move {
+                match client_clone
+                    .post(&worker_url)
+                    .json(&task_clone)
+                    .send()
+                    .await
+                {
+                    Ok(resp) if resp.status().is_success() => {
+                        info!("Tarea {} despachada al worker {}", task_id, worker_url);
+                    }
+                    Ok(resp) => {
+                        error!(
+                            "Error al despachar tarea {} al worker {}: {}",
+                            task_id, worker_url, resp.status()
+                        );
+                    }
+                    Err(e) => {
+                        error!(
+                            "Error al despachar tarea {} al worker {}: {:?}",
+                            task_id, worker_url, e
+                        );
+                    }
+                }
+            });
         }
 
         task_count
@@ -545,7 +552,10 @@ async fn submit_job(
                 fn_name: None,
                 key: None,
                 param: payload.param,
+                path: None,
                 input: payload.input.clone(),
+                input_data: payload.input.clone(),
+                input_paths: None,
                 input_path: None,
                 input2: None,
                 input_path2: None,
@@ -607,13 +617,23 @@ async fn submit_job(
     };
 
     // Calcular número de etapas
-    let stages = if let Some(ref dag) = payload.dag {
+    let num_stages = if let Some(ref dag) = payload.dag {
         match parse_dag(dag) {
             Ok(parsed_stages) => parsed_stages.len(),
             Err(_) => 1, // Fallback a 1 etapa
         }
     } else {
         1 // Formato legacy: 1 etapa
+    };
+    
+    // Obtener parsed_stages si es un DAG
+    let parsed_stages_opt = if let Some(ref dag) = payload.dag {
+        match parse_dag(dag) {
+            Ok(parsed_stages) => Some(parsed_stages),
+            Err(_) => None,
+        }
+    } else {
+        None
     };
 
     // Crear información del job
@@ -627,8 +647,11 @@ async fn submit_job(
         tasks: HashMap::new(),
         start_time: SystemTime::now(),
         end_time: None,
-        stages,
+        stages: num_stages,
         result_paths: Vec::new(),
+        parsed_stages: parsed_stages_opt,
+        stage_results: HashMap::new(),
+        stage_completed_tasks: HashMap::new(),
     };
 
     // Almacenar job
@@ -639,9 +662,9 @@ async fn submit_job(
     }
 
     Ok(Json(SubmitJobResponse {
-        version: MESSAGE_VERSION.to_string(),
         job_id,
         message: "Job enviado exitosamente".to_string(),
+        version: Some(MESSAGE_VERSION.to_string()),
     }))
 }
 
@@ -709,7 +732,7 @@ async fn get_job_progress(
 
     Ok(Json(JobProgress {
         job_id: job.job_id.clone(),
-        name: job.name.clone(),
+        name: Some(job.name.clone()),
         total_tasks: job.total_tasks,
         completed_tasks: job.completed_tasks,
         failed_tasks: job.failed_tasks,
@@ -779,6 +802,204 @@ async fn job_task_result(
                     }
                     // Registrar latencia de tarea (simplificado: usar tiempo actual)
                     // En un sistema real, rastrearíamos tiempos de inicio/fin por tarea
+                }
+            }
+        }
+        
+        // Extraer stage_idx del task_id (formato: {job_id}-stage{stage_idx}-task{task_idx})
+        let current_stage_idx = if let Some(stage_part) = payload.task_id.strip_prefix(&format!("{}-stage", job_id)) {
+            if let Some(dash_pos) = stage_part.find("-task") {
+                stage_part[..dash_pos].parse::<usize>().ok()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Si es un DAG, almacenar resultado y verificar si la etapa completó
+        if let Some(stage_idx) = current_stage_idx {
+            if let Some(ref parsed_stages) = job.parsed_stages {
+                // Almacenar resultado de la tarea
+                job.stage_results.entry(stage_idx).or_insert_with(Vec::new).push(payload.clone());
+                
+                // Incrementar contador de tareas completadas de la etapa
+                let completed = job.stage_completed_tasks.entry(stage_idx).or_insert(0);
+                *completed += 1;
+                
+                // Verificar si todas las tareas de esta etapa se completaron
+                let stage = &parsed_stages[stage_idx];
+                let parallelism = {
+                    let registry = state.registry.read().await;
+                    registry.values().filter(|w| w.status == WorkerStatus::Up).count().max(1)
+                };
+                let num_tasks = stage.partitions.unwrap_or(parallelism);
+                
+                if *completed >= num_tasks {
+                    info!("Etapa {} del job {} completada ({}/{} tareas)", stage_idx, job_id, completed, num_tasks);
+                    
+                    // Despachar siguiente etapa si existe
+                    let next_stage_idx = stage_idx + 1;
+                    if next_stage_idx < parsed_stages.len() {
+                        let next_stage = &parsed_stages[next_stage_idx];
+                        info!("Despachando etapa {} del job {}", next_stage_idx, job_id);
+                        
+                        // Obtener resultados de la etapa anterior para pasar a la siguiente
+                        let prev_results = job.stage_results.get(&stage_idx).cloned().unwrap_or_default();
+                        
+                        // Preparar datos para la siguiente etapa
+                        let mut all_output_data = Vec::new();
+                        for result in &prev_results {
+                            if let Some(ref output) = result.output {
+                                all_output_data.extend_from_slice(output);
+                            }
+                            if let Some(ref output_data) = result.output_data {
+                                if let Some(arr) = output_data.as_array() {
+                                    for item in arr {
+                                        if let Some(num) = item.as_i64() {
+                                            all_output_data.push(num);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Despachar tareas de la siguiente etapa
+                        let client = Client::new();
+                        let num_next_tasks = next_stage.partitions.unwrap_or(parallelism);
+                        
+                        for task_idx in 0..num_next_tasks {
+                            // Dividir datos entre tareas (shuffle simplificado)
+                            let task_data_size = all_output_data.len() / num_next_tasks;
+                            let start_idx = task_idx * task_data_size;
+                            let end_idx = if task_idx == num_next_tasks - 1 {
+                                all_output_data.len()
+                            } else {
+                                (task_idx + 1) * task_data_size
+                            };
+                            let task_input_data: Vec<i64> = all_output_data[start_idx..end_idx].to_vec();
+                            
+                            // Seleccionar worker
+                            let worker = {
+                                let registry = state.registry.read().await;
+                                let available_workers: Vec<_> = registry
+                                    .values()
+                                    .filter(|w| w.status == WorkerStatus::Up)
+                                    .cloned()
+                                    .collect();
+                                
+                                if available_workers.is_empty() {
+                                    warn!("No hay workers disponibles para etapa {}", next_stage_idx);
+                                    continue;
+                                }
+                                
+                                let round_robin_idx = task_idx % available_workers.len();
+                                let round_robin_worker = &available_workers[round_robin_idx];
+                                
+                                let avg_load: usize = available_workers.iter()
+                                    .map(|w| w.active_tasks)
+                                    .sum::<usize>() / available_workers.len().max(1);
+                                
+                                if round_robin_worker.active_tasks > avg_load * 2 && avg_load > 0 {
+                                    available_workers
+                                        .iter()
+                                        .min_by_key(|w| w.active_tasks)
+                                        .unwrap()
+                                        .clone()
+                                } else {
+                                    round_robin_worker.clone()
+                                }
+                            };
+                            
+                            let task_id = format!("{}-stage{}-task{}", job_id, next_stage_idx, task_idx);
+                            
+                            let task_assignment = TaskAssignment {
+                                job_id: job_id.clone(),
+                                task_id: task_id.clone(),
+                                node_id: next_stage.node_id.clone(),
+                                operation: next_stage.operation.clone(),
+                                fn_name: next_stage.fn_name.clone(),
+                                key: next_stage.key.clone(),
+                                param: None,
+                                path: next_stage.path.clone(),
+                                input: Some(task_input_data.clone()),
+                                input_data: Some(task_input_data.clone()),
+                                input_paths: None,
+                                input_path: None,
+                                input2: None,
+                                input_path2: None,
+                                attempt_id: Some(0),
+                            };
+                            
+                            // Registrar tarea
+                            let task_info = TaskInfo {
+                                task_id: task_id.clone(),
+                                node_id: next_stage.node_id.clone(),
+                                job_id: job_id.clone(),
+                                worker_id: Some(worker.id.clone()),
+                                attempt_id: 0,
+                                status: TaskStatus::Pending,
+                                assignment: task_assignment.clone(),
+                            };
+                            
+                            {
+                                let mut jobs = state.jobs.write().await;
+                                if let Some(job) = jobs.get_mut(&job_id) {
+                                    job.tasks.insert(task_id.clone(), task_info);
+                                }
+                            }
+                            
+                            let worker_url = format!(
+                                "http://{}:{}/api/v1/tasks/execute",
+                                worker.host, worker.port
+                            );
+                            
+                            // Actualizar conteo de tareas activas del worker
+                            {
+                                let mut registry = state.registry.write().await;
+                                if let Some(worker_info) = registry.get_mut(&worker.id) {
+                                    worker_info.active_tasks += 1;
+                                }
+                            }
+                            
+                            // Actualizar estado de tarea a Running
+                            {
+                                let mut jobs = state.jobs.write().await;
+                                if let Some(job) = jobs.get_mut(&job_id) {
+                                    if let Some(task) = job.tasks.get_mut(&task_id) {
+                                        task.status = TaskStatus::Running;
+                                    }
+                                }
+                            }
+                            
+                            let client_clone = client.clone();
+                            let task_clone = task_assignment.clone();
+                            tokio::spawn(async move {
+                                match client_clone
+                                    .post(&worker_url)
+                                    .json(&task_clone)
+                                    .send()
+                                    .await
+                                {
+                                    Ok(resp) if resp.status().is_success() => {
+                                        info!("Tarea {} despachada al worker {}", task_id, worker_url);
+                                    }
+                                    Ok(resp) => {
+                                        error!(
+                                            "Error al despachar tarea {} al worker {}: {}",
+                                            task_id, worker_url, resp.status()
+                                        );
+                                    }
+                                    Err(e) => {
+                                        error!(
+                                            "Error al despachar tarea {} al worker {}: {:?}",
+                                            task_id, worker_url, e
+                                        );
+                                    }
+                                }
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -913,9 +1134,8 @@ async fn get_metrics(
     let job_metrics = get_job_metrics_internal(&state).await;
 
     Ok(Json(MetricsResponse {
-        version: MESSAGE_VERSION.to_string(),
-        node_metrics: Some(node_metrics),
-        job_metrics: Some(job_metrics),
+        node_metrics,
+        job_metrics,
     }))
 }
 
@@ -926,9 +1146,8 @@ async fn get_node_metrics(
     let node_metrics = get_node_metrics_internal(&state).await;
 
     Ok(Json(MetricsResponse {
-        version: MESSAGE_VERSION.to_string(),
-        node_metrics: Some(node_metrics),
-        job_metrics: None,
+        node_metrics,
+        job_metrics: Vec::new(),
     }))
 }
 
@@ -939,9 +1158,8 @@ async fn get_job_metrics(
     let job_metrics = get_job_metrics_internal(&state).await;
 
     Ok(Json(MetricsResponse {
-        version: MESSAGE_VERSION.to_string(),
-        node_metrics: None,
-        job_metrics: Some(job_metrics),
+        node_metrics: Vec::new(),
+        job_metrics,
     }))
 }
 
