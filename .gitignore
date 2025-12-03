@@ -12,3 +12,5 @@ target/
 .DS_Store
 Thumbs.db
 
+target/flycheck0/stderr
+target/.rustc_info.json
