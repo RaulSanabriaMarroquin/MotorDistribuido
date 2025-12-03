@@ -5,6 +5,14 @@ use serde::{Deserialize, Serialize};
 // Message versioning
 pub const MESSAGE_VERSION: &str = "1.0";
 
+
+
+
+// ============================================================================
+// Worker Info
+// ============================================================================
+
+
 /// Worker information structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkerInfo {
@@ -33,6 +41,13 @@ impl WorkerStatus {
     }
 }
 
+
+
+// ============================================================================
+// Registration + Heartbeats
+// ============================================================================
+
+
 /// Register request from worker
 #[derive(Debug, Deserialize, Serialize)]
 pub struct RegisterRequest {
@@ -40,6 +55,7 @@ pub struct RegisterRequest {
     pub host: String,
     pub port: u16,
 }
+
 
 /// Register response to worker
 #[derive(Debug, Serialize, Deserialize)]
@@ -80,23 +96,6 @@ pub struct WorkersListResponse {
     pub workers: Vec<WorkerListItem>,
 }
 
-// ============================================================================
-// Job/Task para semana 2
-// ============================================================================
-
-/// Job submission request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JobSpec {
-    /// Job name/description
-    pub name: String,
-    /// Operation: "map_add", "map_mul", "filter_gt", "filter_lt"
-    pub operation: String,
-    /// Parameter for the operation (e.g., factor for map_mul, threshold for filter_gt)
-    pub param: Option<i64>,
-    /// Input data (vector of integers)
-    pub input: Vec<i64>,
-}
-
 /// Response from job submission
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubmitJobResponse {
@@ -105,25 +104,105 @@ pub struct SubmitJobResponse {
     pub message: String,
 }
 
-/// Task assigned to a worker
+// ============================================================================
+// Dataset Source (Semana 2)
+// ============================================================================
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum DatasetSource {
+    Inline { data: Vec<i64> },
+    File { path: String },
+    Csv { path: String },
+    Jsonl { path: String },
+}
+
+// ============================================================================
+// Stage (DAG Batch)
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Stage {
+    pub operation: String,            // "map_add", "join", etc.
+    pub param: Option<i64>,    // used for map/filter/window
+}
+
+// ============================================================================
+// Job Specification
+// ============================================================================
+
+fn default_chunk_size() -> usize { 100 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobSpec {
+    pub name: String,
+
+    #[serde(default)]
+    pub source: Option<DatasetSource>,  // left
+    #[serde(default)]
+    pub source_right: Option<DatasetSource>, // right (join)
+
+    #[serde(default)]
+    pub operation: String,     // legacy mode
+    #[serde(default)]
+    pub param: Option<i64>,    // legacy mode
+    #[serde(default)]
+    pub input: Vec<i64>,       // legacy mode
+
+    #[serde(default = "default_chunk_size")]
+    pub chunk_size: usize,
+
+    #[serde(default)]
+    pub stages: Vec<Stage>,
+}
+
+// ============================================================================
+// Task Assignment
+// ============================================================================
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskAssignment {
     pub job_id: String,
     pub task_id: String,
     pub operation: String,
+
+    // modo normal
+    #[serde(default)]
+    pub input: Vec<i64>, // map/filter/reduce_by_key
+
+    // modo join (dos colecciones)
+    #[serde(default)]
+    pub left: Vec<i64>, // join: colección A
+    #[serde(default)]
+    pub right: Vec<i64>, // join: colección B
+
+    // usado por filtros/map
     pub param: Option<i64>,
-    pub input: Vec<i64>,
+
+    pub stage_id: usize,
+    #[serde(default)]
+    pub reassign_attempt: u32,
 }
 
-/// Task result returned by worker
+// ============================================================================
+// Resultados
+// ============================================================================
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskResult {
     pub job_id: String,
     pub task_id: String,
     pub output: Vec<i64>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
-/// Job progress/status (used by master)
+// ============================================================================
+// Job Progress
+// ============================================================================
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobProgress {
     pub job_id: String,
@@ -131,8 +210,9 @@ pub struct JobProgress {
     pub total_tasks: usize,
     pub completed_tasks: usize,
     pub failed_tasks: usize,
-    pub status: String, // "running", "completed", "failed"
+    pub status: String,
 }
+
 
 #[cfg(test)]
 mod tests {

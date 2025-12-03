@@ -33,8 +33,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|_| "3".to_string())
         .parse()
         .expect("Invalid HEARTBEAT_INTERVAL_SECS");
+    let task_execution_delay_secs: u64 = std::env::var("TASK_EXECUTION_DELAY_SECS")
+        .unwrap_or_else(|_| "0".to_string())
+        .parse()
+        .expect("Invalid TASK_EXECUTION_DELAY_SECS");
 
-    info!(%master_url, %host, port, "Worker node starting");
+    info!(%master_url, %host, port, task_execution_delay_secs, "Worker node starting");
 
     let http_client = Client::new();
 
@@ -77,7 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/api/v1/tasks/execute", post(execute_task))
-        .with_state((master_url_clone, http_client_clone));
+        .with_state((master_url_clone, http_client_clone, task_execution_delay_secs));
 
     let addr = format!("{}:{}", host, port);
     let listener = TcpListener::bind(&addr).await?;
@@ -126,45 +130,134 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Execute a task and return result
 async fn execute_task(
-    axum::extract::State((master_url, http_client)): axum::extract::State<(String, Client)>,
+    axum::extract::State((master_url, http_client, task_execution_delay_secs)): axum::extract::State<(String, Client, u64)>,
     Json(payload): Json<TaskAssignment>,
 ) -> Result<AxumJson<serde_json::Value>, axum::http::StatusCode> {
     info!(
-        "Executing task: {} for job: {} (op: {})",
-        payload.task_id, payload.job_id, payload.operation
+    "Executing task: {} for job: {} (op: {}) stage={} attempt={}",
+    payload.task_id,
+    payload.job_id,
+    payload.operation,
+    payload.stage_id,
+    payload.reassign_attempt,
     );
 
+    // Add optional delay to simulate long-running tasks
+    if task_execution_delay_secs > 0 {
+        info!(
+            "Task {} delaying execution for {} seconds",
+            payload.task_id, task_execution_delay_secs
+        );
+        sleep(Duration::from_secs(task_execution_delay_secs)).await;
+    }
+
     // Execute the operation
-    let output: Vec<i64> = match payload.operation.as_str() {
+    let mut output: Vec<i64> = Vec::new();
+    let mut task_error: Option<String> = None;
+
+    match payload.operation.as_str() {
         "map_add" => {
             let param = payload.param.unwrap_or(0);
-            payload.input.iter().map(|x| x + param).collect()
+            output = payload.input.iter().map(|x| x + param).collect();
         }
         "map_mul" => {
             let param = payload.param.unwrap_or(1);
-            payload.input.iter().map(|x| x * param).collect()
+            output = payload.input.iter().map(|x| x * param).collect();
         }
         "filter_gt" => {
             let threshold = payload.param.unwrap_or(0);
-            payload
+            output = payload
                 .input
                 .iter()
                 .copied()
                 .filter(|x| *x > threshold)
-                .collect()
+                .collect();
         }
         "filter_lt" => {
             let threshold = payload.param.unwrap_or(0);
-            payload
+            output = payload
                 .input
                 .iter()
                 .copied()
                 .filter(|x| *x < threshold)
-                .collect()
+                .collect();
+        }
+        "reduce_by_key" => {
+            // ensure even length
+            if payload.input.len() % 2 != 0 {
+                task_error = Some("reduce_by_key: input length is not even (key/value mismatch)".into());
+            } else {
+                let mut map = std::collections::HashMap::<i64, i64>::new();
+
+                // accumulate values by key
+                for pair in payload.input.chunks(2) {
+                    let key = pair[0];
+                    let val = pair[1];
+                    *map.entry(key).or_insert(0) += val;
+                }
+
+                // produce sorted interleaved output
+                let mut kv_pairs: Vec<(i64, i64)> = map.into_iter().collect();
+                kv_pairs.sort_by_key(|p| p.0);
+
+                output = kv_pairs
+                    .into_iter()
+                    .flat_map(|(k,v)| vec![k, v])
+                    .collect();
+            }
+        }
+            "join" => {
+            // Validate input
+            if payload.left.len() % 2 != 0 || payload.right.len() % 2 != 0 {
+                task_error = Some("JOIN: left or right length is not even (k,v pairs malformed)".into());
+            } else {
+                // Build maps for left and right collections
+                let mut left_map = std::collections::HashMap::<i64, i64>::new();
+                let mut right_map = std::collections::HashMap::<i64, i64>::new();
+
+                for pair in payload.left.chunks(2) {
+                    left_map.insert(pair[0], pair[1]);
+                }
+                for pair in payload.right.chunks(2) {
+                    right_map.insert(pair[0], pair[1]);
+                }
+
+                // Compute intersection keys
+                let mut result: Vec<i64> = Vec::new();
+                let mut keys: Vec<i64> = left_map
+                    .keys()
+                    .filter(|k| right_map.contains_key(k))
+                    .cloned()
+                    .collect();
+
+                // Sort keys for deterministic output
+                keys.sort();
+
+                // Join output: [k, left_val, right_val, ...]
+                for k in keys {
+                    let lv = left_map[&k];
+                    let rv = right_map[&k];
+                    result.push(k);
+                    result.push(lv);
+                    result.push(rv);
+                }
+
+                output = result;
+            }
+        }
+        "flat_map" => {
+            let mut out = Vec::new();
+            for x in &payload.input {
+                // ejemplo sencillo: produce dos valores
+                out.push(*x);
+                out.push(*x * 2);
+            }
+            output = out;
         }
         _ => {
-            error!("Unknown operation: {}", payload.operation);
-            return Err(axum::http::StatusCode::BAD_REQUEST);
+            let msg = format!("Unknown operation: {}", payload.operation);
+            error!("{}", msg);
+            task_error = Some(msg);
         }
     };
 
@@ -180,6 +273,7 @@ async fn execute_task(
         job_id: payload.job_id.clone(),
         task_id: payload.task_id.clone(),
         output: output.clone(),
+        error: task_error.clone(),
     };
 
     let result_url = format!("{}/api/v1/jobs/{}/task_result", master_url, payload.job_id);

@@ -1,79 +1,8 @@
-   0.259289000s  INFO prepare_target{force=false package_id=client v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\client) target="client"}: cargo::core::compiler::fingerprint: stale: changed "C:\\Users\\Raul\\Desktop\\TEC\\SO\\MotorDistribuido\\common\\src\\lib.rs"
-   0.259316600s  INFO prepare_target{force=false package_id=client v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\client) target="client"}: cargo::core::compiler::fingerprint:           (vs) "C:\\Users\\Raul\\Desktop\\TEC\\SO\\MotorDistribuido\\target\\debug\\.fingerprint\\common-0655799547ce038c\\dep-lib-common"
-   0.259323900s  INFO prepare_target{force=false package_id=client v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\client) target="client"}: cargo::core::compiler::fingerprint:                FileTime { seconds: 13408257673, nanos: 952505100 } < FileTime { seconds: 13408271100, nanos: 25553200 }
-   0.275474900s  INFO prepare_target{force=false package_id=client v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\client) target="client"}: cargo::core::compiler::fingerprint: fingerprint dirty for client v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\client)/Check { test: false }/TargetInner { name: "client", doc: true, ..: with_path("C:\\Users\\Raul\\Desktop\\TEC\\SO\\MotorDistribuido\\client\\src\\main.rs", Edition2021) }
-   0.275502400s  INFO prepare_target{force=false package_id=client v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\client) target="client"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "common" })
-   0.280023800s  INFO prepare_target{force=false package_id=common v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\common) target="common"}: cargo::core::compiler::fingerprint: fingerprint dirty for common v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\common)/Check { test: false }/TargetInner { ..: lib_target("common", ["lib"], "C:\\Users\\Raul\\Desktop\\TEC\\SO\\MotorDistribuido\\common\\src\\lib.rs", Edition2021) }
-   0.280041300s  INFO prepare_target{force=false package_id=common v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\common) target="common"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleItem(ChangedFile { reference: "C:\\Users\\Raul\\Desktop\\TEC\\SO\\MotorDistribuido\\target\\debug\\.fingerprint\\common-0655799547ce038c\\dep-lib-common", reference_mtime: FileTime { seconds: 13408257673, nanos: 952505100 }, stale: "C:\\Users\\Raul\\Desktop\\TEC\\SO\\MotorDistribuido\\common\\src\\lib.rs", stale_mtime: FileTime { seconds: 13408271100, nanos: 25553200 } }))
-   0.297020100s  INFO prepare_target{force=false package_id=client v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\client) target="client"}: cargo::core::compiler::fingerprint: fingerprint dirty for client v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\client)/Check { test: true }/TargetInner { name: "client", doc: true, ..: with_path("C:\\Users\\Raul\\Desktop\\TEC\\SO\\MotorDistribuido\\client\\src\\main.rs", Edition2021) }
-   0.297038900s  INFO prepare_target{force=false package_id=client v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\client) target="client"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "common" })
-   0.297893100s  INFO prepare_target{force=false package_id=common v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\common) target="common"}: cargo::core::compiler::fingerprint: stale: changed "C:\\Users\\Raul\\Desktop\\TEC\\SO\\MotorDistribuido\\common\\src\\lib.rs"
-   0.297901600s  INFO prepare_target{force=false package_id=common v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\common) target="common"}: cargo::core::compiler::fingerprint:           (vs) "C:\\Users\\Raul\\Desktop\\TEC\\SO\\MotorDistribuido\\target\\debug\\.fingerprint\\common-ac2cd89263321de1\\dep-test-lib-common"
-   0.297905100s  INFO prepare_target{force=false package_id=common v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\common) target="common"}: cargo::core::compiler::fingerprint:                FileTime { seconds: 13408257673, nanos: 954505000 } < FileTime { seconds: 13408271100, nanos: 25553200 }
-   0.298259500s  INFO prepare_target{force=false package_id=common v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\common) target="common"}: cargo::core::compiler::fingerprint: fingerprint dirty for common v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\common)/Check { test: true }/TargetInner { ..: lib_target("common", ["lib"], "C:\\Users\\Raul\\Desktop\\TEC\\SO\\MotorDistribuido\\common\\src\\lib.rs", Edition2021) }
-   0.298275200s  INFO prepare_target{force=false package_id=common v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\common) target="common"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleItem(ChangedFile { reference: "C:\\Users\\Raul\\Desktop\\TEC\\SO\\MotorDistribuido\\target\\debug\\.fingerprint\\common-ac2cd89263321de1\\dep-test-lib-common", reference_mtime: FileTime { seconds: 13408257673, nanos: 954505000 }, stale: "C:\\Users\\Raul\\Desktop\\TEC\\SO\\MotorDistribuido\\common\\src\\lib.rs", stale_mtime: FileTime { seconds: 13408271100, nanos: 25553200 } }))
-   0.300765400s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint: fingerprint dirty for master v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\master)/Check { test: false }/TargetInner { name: "master", doc: true, ..: with_path("C:\\Users\\Raul\\Desktop\\TEC\\SO\\MotorDistribuido\\master\\src\\main.rs", Edition2021) }
-   0.300785500s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "common" })
-   0.303144100s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint: fingerprint dirty for master v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\master)/Check { test: true }/TargetInner { name: "master", doc: true, ..: with_path("C:\\Users\\Raul\\Desktop\\TEC\\SO\\MotorDistribuido\\master\\src\\main.rs", Edition2021) }
-   0.303155900s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "common" })
-   0.304381200s  INFO prepare_target{force=false package_id=worker v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\worker) target="worker"}: cargo::core::compiler::fingerprint: fingerprint error for worker v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\worker)/Check { test: false }/TargetInner { name: "worker", doc: true, ..: with_path("C:\\Users\\Raul\\Desktop\\TEC\\SO\\MotorDistribuido\\worker\\src\\main.rs", Edition2021) }
-   0.304393600s  INFO prepare_target{force=false package_id=worker v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\worker) target="worker"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\target\debug\.fingerprint\worker-037bb150595df9c0\bin-worker`
-
-Caused by:
-    The system cannot find the file specified. (os error 2)
-
-Stack backtrace:
-   0: git_midx_writer_dump
-   1: git_midx_writer_dump
-   2: git_midx_writer_dump
-   3: git_midx_writer_dump
-   4: git_filter_source_repo
-   5: git_filter_source_path
-   6: git_filter_source_path
-   7: git_filter_source_path
-   8: git_filter_source_path
-   9: git_filter_source_repo
-  10: git_filter_source_repo
-  11: git_filter_source_repo
-  12: git_filter_source_repo
-  13: git_filter_source_repo
-  14: <unknown>
-  15: <unknown>
-  16: git_midx_writer_dump
-  17: git_filter_source_repo
-  18: git_midx_writer_dump
-  19: BaseThreadInitThunk
-  20: RtlUserThreadStart
-   0.312759900s  INFO prepare_target{force=false package_id=worker v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\worker) target="worker"}: cargo::core::compiler::fingerprint: fingerprint error for worker v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\worker)/Check { test: true }/TargetInner { name: "worker", doc: true, ..: with_path("C:\\Users\\Raul\\Desktop\\TEC\\SO\\MotorDistribuido\\worker\\src\\main.rs", Edition2021) }
-   0.312778400s  INFO prepare_target{force=false package_id=worker v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\worker) target="worker"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\target\debug\.fingerprint\worker-c5de96a2859b97ff\test-bin-worker`
-
-Caused by:
-    The system cannot find the file specified. (os error 2)
-
-Stack backtrace:
-   0: git_midx_writer_dump
-   1: git_midx_writer_dump
-   2: git_midx_writer_dump
-   3: git_midx_writer_dump
-   4: git_filter_source_repo
-   5: git_filter_source_path
-   6: git_filter_source_path
-   7: git_filter_source_path
-   8: git_filter_source_path
-   9: git_filter_source_repo
-  10: git_filter_source_repo
-  11: git_filter_source_repo
-  12: git_filter_source_repo
-  13: git_filter_source_repo
-  14: <unknown>
-  15: <unknown>
-  16: git_midx_writer_dump
-  17: git_filter_source_repo
-  18: git_midx_writer_dump
-  19: BaseThreadInitThunk
-  20: RtlUserThreadStart
-    Checking common v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\common)
+   0.204306800s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint: dependency on `common` is newer than we are 13409257183.103151400s > 13409255125.537273500s "C:\\Users\\Raul\\Desktop\\TEC\\SO\\MotorDistribuido\\master"
+   0.204670200s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint: fingerprint dirty for master v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\master)/Check { test: false }/TargetInner { name: "master", doc: true, ..: with_path("C:\\Users\\Raul\\Desktop\\TEC\\SO\\MotorDistribuido\\master\\src\\main.rs", Edition2021) }
+   0.204689200s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDependency { name: "common", dep_mtime: FileTime { seconds: 13409257183, nanos: 103151400 }, max_mtime: FileTime { seconds: 13409255125, nanos: 537273500 } })
+   0.224278900s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint: dependency on `common` is newer than we are 13409257183.103151400s > 13409255125.537273500s "C:\\Users\\Raul\\Desktop\\TEC\\SO\\MotorDistribuido\\master"
+   0.224571800s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint: fingerprint dirty for master v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\master)/Check { test: true }/TargetInner { name: "master", doc: true, ..: with_path("C:\\Users\\Raul\\Desktop\\TEC\\SO\\MotorDistribuido\\master\\src\\main.rs", Edition2021) }
+   0.224584600s  INFO prepare_target{force=false package_id=master v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\master) target="master"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDependency { name: "common", dep_mtime: FileTime { seconds: 13409257183, nanos: 103151400 }, max_mtime: FileTime { seconds: 13409255125, nanos: 537273500 } })
     Checking master v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\master)
-    Checking client v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\client)
-    Checking worker v0.1.0 (C:\Users\Raul\Desktop\TEC\SO\MotorDistribuido\worker)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.09s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.62s
