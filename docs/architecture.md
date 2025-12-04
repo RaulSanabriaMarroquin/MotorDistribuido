@@ -83,20 +83,21 @@ El **client** también usa **Tokio**, pero su uso es mucho más simple: hace sol
 Aquí se representa cómo el sistema NO usa threads tradicionales para cada conexión, sino tasks asíncronas multiplexadas por Tokio.
 ```mermaid
 flowchart LR
-    subgraph Master (Tokio Runtime)
-        A[(REST API Task)]
-        B[(Heartbeat Monitor Task)]
-        C[(Job Scheduler Task)]
+
+    subgraph MASTER — Tokio Runtime
+        A[[REST API Handler Task]]
+        B[[Heartbeat Monitor Task]]
+        C[[Job Scheduler Task]]
     end
 
-    subgraph Worker (Tokio Runtime)
-        X[(Execute Task)]
-        H[(Heartbeat Sender Task)]
+    subgraph WORKER — Tokio Runtime
+        X[[Task Executor]]
+        H[[Heartbeat Loop]]
     end
 
     Client --> A
-    B --> A
-    C --> A
+    A --> B
+    A --> C
 ```
 
 
