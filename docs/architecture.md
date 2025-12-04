@@ -14,6 +14,20 @@ Cada componente es independiente:
 
 El objetivo arquitectónico es separar el master del tabajo que para eso sirven los workers, usando HTTP asíncrono y estructuras de datos en memoria para permitir iterar rápido.
 
+```mermaid
+flowchart LR
+    Client[Client CLI]:::client --> Master[Master HTTP Server]:::master
+    Master --> W1[Worker 1]:::worker
+    Master --> W2[Worker 2]:::worker
+    Master --> Wn[Worker N]:::worker
+
+classDef master fill:#0066ff,stroke:#003d99,color:white,font-weight:bold;
+classDef worker fill:#f9b233,stroke:#a66a00,color:black;
+classDef client fill:#00b86e,stroke:#00804f,color:white,font-weight:bold;
+```
+Este diagrama representa la arquitectura global del sistema. Resume el rol de los tres procesos fundamentales —master, workers y client— y cómo interactúan mediante HTTP/JSON.
+Su objetivo es brindar una vista macro para entender quién coordina, quién ejecuta y quién usa el sistema.
+
 ## Procesos
 
 En tiempo de ejecución normalmente hay:
@@ -25,6 +39,34 @@ En tiempo de ejecución normalmente hay:
 - Uno o varios procesos client invocados desde la terminal para enviar jobs y consultar estado.
 
 Toda comunicación se hace por HTTP/JSON.
+```mermaid
+graph TB
+    subgraph Host A
+        M((MASTER<br>127.0.0.1:8080)):::master
+    end
+
+    subgraph Host B
+        W1((WORKER 1)):::worker
+        W2((WORKER 2)):::worker
+        W3((WORKER 3...N)):::worker
+    end
+
+    subgraph Terminal
+        C((CLIENT CLI)):::client
+    end
+
+    C --> M
+    M --> W1
+    M --> W2
+    M --> W3
+
+classDef master fill:#007bff,color:white;
+classDef worker fill:#ffb22e,color:black;
+classDef client fill:#1dd1a1,color:black;
+```
+
+Este diagrama refleja los procesos que existen simultáneamente en ejecución.
+Representa la distribución real del sistema en runtime:
 
 ## Hilos y Tareas Asíncronas
 
@@ -35,6 +77,29 @@ En **master**, el servidor HTTP de **Axum** (framework de http) levanta una task
 En el **worker**, se levanta un pequeño servidor HTTP que expone /api/v1/tasks/execute, y en paralelo se lanza una task en segundo plano que envía heartbeats periódicos al master. Cada solicitud de ejecución de tarea se maneja como una task independiente, de forma que un worker puede procesar varias tareas en paralelo (limitado por el número de threads y el tipo de trabajo).
 
 El **client** también usa **Tokio**, pero su uso es mucho más simple: hace solicitudes HTTP puntuales (list-workers, submit-job, get-progress) y termina.
+
+
+
+Aquí se representa cómo el sistema NO usa threads tradicionales para cada conexión, sino tasks asíncronas multiplexadas por Tokio.
+```mermaid
+flowchart LR
+    subgraph Master (Tokio Runtime)
+        A[(REST API Task)]
+        B[(Heartbeat Monitor Task)]
+        C[(Job Scheduler Task)]
+    end
+
+    subgraph Worker (Tokio Runtime)
+        X[(Execute Task)]
+        H[(Heartbeat Sender Task)]
+    end
+
+    Client --> A
+    B --> A
+    C --> A
+```
+
+
 
 ## Protocolo e Intercambio de Mensajes
 
@@ -49,6 +114,16 @@ Toda la comunicación entre componentes se realiza mediante:
 - Framework: Axum en el lado servidor (master y worker), reqwest en el lado cliente.
 
 Los mensajes incluyen un campo de versión (MESSAGE_VERSION) para permitir la evolución del protocolo sin romper compatibilidad. Por ejemplo, el registro de un worker (RegisterRequest / RegisterResponse) y los heartbeats (HeartbeatRequest / HeartbeatResponse) llevan esta versión de mensaje.
+
+```mermaid
+sequenceDiagram
+    Client ->> Master: POST /jobs/submit {JobSpec}
+    Master ->> Workers: POST /tasks/execute {TaskAssignment}
+    Workers ->> Master: POST /tasks/result {TaskResult}
+    Client ->> Master: GET /jobs/progress
+    Master -->> Client: { JobProgress JSON }
+```
+Este diagrama muestra el intercambio real de mensajes. Ilustra quién llama a quién, en qué dirección viajan solicitudes y qué tipo de payload contienen.
 
 ## API expuesta por el Master
 
@@ -103,7 +178,7 @@ El master envía una TaskAssignment que describe:
 
 El worker ejecuta la operación localmente, produce un vector de salida (output) y luego envía un TaskResult de vuelta al master usando el endpoint de resultados descrito antes. Opcionalmente puede simular tareas largas introduciendo un retraso configurable (TASK_EXECUTION_DELAY_SECS).
 
-Modelo de Memoria y Estructuras de Estado
+## Modelo de Memoria y Estructuras de Estado
 
 El master mantiene todo su estado en memoria dentro de la estructura AppState, que se comparte entre handlers HTTP mediante Arc<RwLock<...>>. Esto permite acceso concurrente: múltiples peticiones pueden leer al mismo tiempo, y las escrituras se hacen con exclusión mutua.
 
@@ -127,6 +202,21 @@ La tabla registry almacena objetos WorkerInfo, que contienen:
 
 Los handlers de registro y heartbeats escriben aquí; el monitor de workers lo lee y actualiza el estado en función del tiempo transcurrido desde last_heartbeat.
 
+Cada worker se registra, se mantiene actualizado con heartbeats, y puede caer (DOWN) si deja de responder.
+```mermaid
+flowchart LR
+    subgraph Registry
+      W0[(worker_id: w001<br>last_heartbeat...)]
+      W1[(worker_id: w002<br>last_heartbeat...)]
+      W2[(worker_id: w003-N<br>status UP/DOWN)]
+    end
+
+    Worker1 -->|register| Registry
+    Worker1 -->|heartbeat| Registry
+    Worker2 -->|register| Registry
+    Worker2 -->|heartbeat| Registry
+```
+
 ## Estado de los Jobs
 
 Cada trabajo enviado al master se representa con un JobInfo. Esta estructura es el corazón de la planificación y tolerancia a fallos en memoria:
@@ -146,6 +236,21 @@ Cada trabajo enviado al master se representa con un JobInfo. Esta estructura es 
    - Resultado intermedio: stage_output, donde se acumula la salida de cada stage (típicamente como pares (key, value) o tuplas en caso de join).
 
 Gracias a estas estructuras, el master puede responder preguntas de progreso, detectar que un stage terminó, preparar el shuffle para el siguiente stage y reintentar tareas sin perder información.
+
+```mermaid
+flowchart LR
+
+    Client --> Master
+    Master -->|Stage 0 => tasks| Workers
+    Workers -->|results| Master
+
+    Master -->|Shuffle + build next stage| Master
+    Master -->|Stage 1 => tasks| Workers
+    Workers --> Master
+
+    Master -->|Stage Final| Workers
+    Workers --> Master -->|Output final| Client
+```
 
 ## Métricas en Memoria
 
@@ -260,45 +365,16 @@ Este enfoque cubre tanto fallos temporales de red como caídas de procesos worke
 ```mermaid
 flowchart TD
 
-    %% CLIENTE
-    Client[[CLIENT CLI]]
-    Client -->|"HTTP/JSON"| MasterAPI
+    W((WORKER)):::worker -->|heartbeat| M((MASTER)):::master
 
-    %% MASTER
-    subgraph MasterNode[MASTER]
-        MasterAPI((REST API))
-        REG[(Worker Registry\n+ Job Table)]
-        MON[(Monitor de Workers\n+ Replanificación)]
-        MET[(Métricas Globales)]
-    end
+    M -->|detect timeout| D((Worker DOWN))
+    M --> Q((reassign_queue))
 
-    MasterAPI --> REG
-    MasterAPI --> MET
-    MON --> REG
-    MON --> REG
+    Q -->|assign next| W2((Worker distinto)):::worker
 
-    %% WORKERS
-    subgraph Workers[Workers]
-        W1((Worker 1))
-        W2((Worker 2))
-        W3((Worker N))
-    end
-
-    %% Registro y heartbeats
-    W1 -->|"register + heartbeat"| MasterAPI
-    W2 -->|"register + heartbeat"| MasterAPI
-    W3 -->|"register + heartbeat"| MasterAPI
-
-    %% Asignación de tareas
-    MasterAPI -->|"TaskAssignment\n(map/filter/reduce_by_key/join)"| W1
-    MasterAPI -->|"TaskAssignment"| W2
-    MasterAPI -->|"TaskAssignment"| W3
-
-    %% Resultados de tareas
-    W1 -->|"TaskResult\n(output + error)"| MasterAPI
-    W2 -->|"TaskResult"| MasterAPI
-    W3 -->|"TaskResult"| MasterAPI
-
-    %% Interacción del cliente
-    Client <-->|"list-workers\nsubmit-job\nget-progress\nmetrics"| MasterAPI
+classDef master fill:#0066ff,color:white;
+classDef worker fill:#ffb22e,color:black;
 ```
+
+
+
