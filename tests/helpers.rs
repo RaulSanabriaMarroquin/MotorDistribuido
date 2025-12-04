@@ -217,6 +217,12 @@ async fn get_job_progress(
         completed_tasks: job.completed_tasks,
         failed_tasks: job.failed_tasks,
         status: job.status.clone(),
+        total_stages: None,
+        current_stage: None,
+        start_time_secs: None,
+        end_time_secs: None,
+        duration_secs: None,
+        total_retries: None,
     }))
 }
 

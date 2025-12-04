@@ -32,6 +32,14 @@ struct WorkerInfo {
     port: u16,
     last_heartbeat: SystemTime,
     status: WorkerStatus,
+    // Métricas por nodo
+    active_tasks: usize,              // Número de tareas activas
+    total_tasks_completed: u64,       // Total de tareas completadas por este worker
+    total_retries: u64,               // Total de reintentos
+    average_latency_ms: f64,          // Latencia promedio en milisegundos
+    latency_samples: Vec<f64>,        // Muestras de latencia (últimas 100)
+    cpu_usage_percent: f64,           // Uso de CPU aproximado (0-100)
+    memory_usage_mb: f64,             // Uso de memoria en MB
 }
 
 /// Job information stored in registry
@@ -58,7 +66,10 @@ struct JobInfo {
     // NUEVO: salida derecha para JOIN
     pub stage_output_left: Vec<i64>,
     pub stage_output_right: Vec<i64>,
-
+    // Métricas por job
+    start_time: Option<SystemTime>,  // Tiempo de inicio del job
+    end_time: Option<SystemTime>,    // Tiempo de finalización del job
+    total_retries: u64,               // Total de reintentos para este job
 }
 
 /// Shared application state
@@ -114,6 +125,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/jobs/:id/task_result", post(job_task_result))
         .route("/api/v1/jobs/:id/next_stage", post(next_stage))
         .route("/api/v1/metrics", get(get_metrics))
+        .route("/api/v1/workers/:id/metrics", get(get_worker_metrics))
         .with_state(state);
 
     // Start server
@@ -186,6 +198,13 @@ async fn register_worker(
         port: payload.port,
         last_heartbeat: SystemTime::now(),
         status: WorkerStatus::Up,
+        active_tasks: 0,
+        total_tasks_completed: 0,
+        total_retries: 0,
+        average_latency_ms: 0.0,
+        latency_samples: Vec::new(),
+        cpu_usage_percent: 0.0,
+        memory_usage_mb: 0.0,
     };
 
     {
@@ -223,12 +242,34 @@ async fn get_metrics(
         .filter(|w| w.status == WorkerStatus::Down)
         .count();
 
+    // Métricas por nodo (workers)
+    let worker_metrics: Vec<serde_json::Value> = registry
+        .values()
+        .map(|w| {
+            json!({
+                "worker_id": w.id,
+                "host": w.host,
+                "port": w.port,
+                "status": w.status.as_str(),
+                "active_tasks": w.active_tasks,
+                "total_tasks_completed": w.total_tasks_completed,
+                "total_retries": w.total_retries,
+                "average_latency_ms": w.average_latency_ms,
+                "cpu_usage_percent": w.cpu_usage_percent,
+                "memory_usage_mb": w.memory_usage_mb,
+            })
+        })
+        .collect();
+
     Ok(Json(json!({
-        "jobs_submitted": metrics.jobs_submitted,
-        "tasks_completed": metrics.tasks_completed,
-        "tasks_failed": metrics.tasks_failed,
-        "workers_up": workers_up,
-        "workers_down": workers_down
+        "global": {
+            "jobs_submitted": metrics.jobs_submitted,
+            "tasks_completed": metrics.tasks_completed,
+            "tasks_failed": metrics.tasks_failed,
+            "workers_up": workers_up,
+            "workers_down": workers_down
+        },
+        "workers": worker_metrics
     })))
 }
 
@@ -305,6 +346,36 @@ async fn list_workers(
         version: MESSAGE_VERSION.to_string(),
         workers,
     }))
+}
+
+/// Get metrics for a specific worker
+async fn get_worker_metrics(
+    State(state): State<AppState>,
+    Path(worker_id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let registry = state.registry.read().await;
+
+    let worker = registry.get(&worker_id).ok_or_else(|| {
+        warn!("Worker not found: {}", worker_id);
+        StatusCode::NOT_FOUND
+    })?;
+
+    Ok(Json(json!({
+        "worker_id": worker.id,
+        "host": worker.host,
+        "port": worker.port,
+        "status": worker.status.as_str(),
+        "active_tasks": worker.active_tasks,
+        "total_tasks_completed": worker.total_tasks_completed,
+        "total_retries": worker.total_retries,
+        "average_latency_ms": worker.average_latency_ms,
+        "cpu_usage_percent": worker.cpu_usage_percent,
+        "memory_usage_mb": worker.memory_usage_mb,
+        "last_heartbeat_secs": worker.last_heartbeat
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_secs()),
+    })))
 }
 
 async fn load_dataset(source: &DatasetSource) -> Vec<i64> {
@@ -525,6 +596,9 @@ async fn submit_job(
         status: "running".to_string(),
         outstanding_tasks: HashMap::new(),
         reassign_queue: Vec::new(),
+        start_time: Some(SystemTime::now()),
+        end_time: None,
+        total_retries: 0,
         task_payloads: HashMap::new(),
         stages: stages.clone(),
         current_stage: 0,
@@ -645,13 +719,41 @@ async fn submit_job(
                     let mut backoff = Duration::from_secs(1);
                     let mut success = false;
 
+                    // Incrementar active_tasks del worker
+                    {
+                        let mut registry = state_clone.registry.write().await;
+                        if let Some(worker) = registry.get_mut(&worker_id_clone) {
+                            worker.active_tasks += 1;
+                        }
+                    }
+
                     while attempt < max_retries {
                         attempt += 1;
+                        let attempt_start = SystemTime::now();
                         match client_clone.post(&worker_url_clone).json(&task_clone).send().await {
                             Ok(resp) if resp.status().is_success() => {
+                                let latency = attempt_start.elapsed().unwrap_or(Duration::ZERO).as_millis() as f64;
+                                
+                                // Actualizar métricas del worker
+                                {
+                                    let mut registry = state_clone.registry.write().await;
+                                    if let Some(worker) = registry.get_mut(&worker_id_clone) {
+                                        worker.latency_samples.push(latency);
+                                        // Mantener solo las últimas 100 muestras
+                                        if worker.latency_samples.len() > 100 {
+                                            worker.latency_samples.remove(0);
+                                        }
+                                        // Calcular promedio
+                                        worker.average_latency_ms = worker.latency_samples.iter().sum::<f64>() / worker.latency_samples.len() as f64;
+                                        if attempt > 1 {
+                                            worker.total_retries += 1;
+                                        }
+                                    }
+                                }
+                                
                                 info!(
-                                    "Task {} dispatched successfully to worker {} (attempt {})",
-                                    task_clone.task_id, worker_url_clone, attempt
+                                    "Task {} dispatched successfully to worker {} (attempt {}, latency: {:.2}ms)",
+                                    task_clone.task_id, worker_url_clone, attempt, latency
                                 );
                                 success = true;
                                 break;
@@ -664,20 +766,46 @@ async fn submit_job(
                                     resp.status(),
                                     attempt
                                 );
+                                
+                                // Incrementar reintentos del worker
+                                if attempt < max_retries {
+                                    let mut registry = state_clone.registry.write().await;
+                                    if let Some(worker) = registry.get_mut(&worker_id_clone) {
+                                        worker.total_retries += 1;
+                                    }
+                                }
                             }
                             Err(e) => {
                                 error!(
                                     "Error dispatching task {} to worker {}: {:?} (attempt {})",
                                     task_clone.task_id, worker_url_clone, e, attempt
                                 );
+                                
+                                // Incrementar reintentos del worker
+                                if attempt < max_retries {
+                                    let mut registry = state_clone.registry.write().await;
+                                    if let Some(worker) = registry.get_mut(&worker_id_clone) {
+                                        worker.total_retries += 1;
+                                    }
+                                }
                             }
                         }
 
-                        tokio::time::sleep(backoff).await;
-                        backoff = backoff + backoff;
+                        if attempt < max_retries {
+                            tokio::time::sleep(backoff).await;
+                            backoff = backoff + backoff;
+                        }
                     }
 
                     if !success {
+                        // Decrementar active_tasks si falló
+                        {
+                            let mut registry = state_clone.registry.write().await;
+                            if let Some(worker) = registry.get_mut(&worker_id_clone) {
+                                worker.active_tasks = worker.active_tasks.saturating_sub(1);
+                            }
+                        }
+                        
                         let mut jobs = state_clone.jobs.write().await;
                         if let Some(job) = jobs.get_mut(&job_id_clone) {
                             job.outstanding_tasks.remove(&task_id_clone);
@@ -687,6 +815,7 @@ async fn submit_job(
                                 task_clone.operation.clone(),
                                 task_clone.param,
                             ));
+                            job.total_retries += 1;
                             info!(
                                 "Task {} failed dispatch from worker {}, added to reassign queue for job {}",
                                 task_id_clone, worker_id_clone, job_id_clone
@@ -823,6 +952,21 @@ async fn get_job_progress(
         job_id, job.completed_tasks, job.total_tasks
     );
 
+    // Calcular duración si hay tiempos
+    let duration_secs = if let (Some(start), Some(end)) = (job.start_time, job.end_time) {
+        end.duration_since(start)
+            .ok()
+            .map(|d| d.as_secs_f64())
+    } else if let Some(start) = job.start_time {
+        // Job aún en ejecución, calcular duración hasta ahora
+        SystemTime::now()
+            .duration_since(start)
+            .ok()
+            .map(|d| d.as_secs_f64())
+    } else {
+        None
+    };
+
     Ok(Json(JobProgress {
         job_id: job.job_id.clone(),
         name: job.name.clone(),
@@ -830,6 +974,16 @@ async fn get_job_progress(
         completed_tasks: job.completed_tasks,
         failed_tasks: job.failed_tasks,
         status: job.status.clone(),
+        total_stages: Some(job.stages.len()),
+        current_stage: Some(job.current_stage),
+        start_time_secs: job.start_time
+            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs()),
+        end_time_secs: job.end_time
+            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs()),
+        duration_secs,
+        total_retries: Some(job.total_retries),
     }))
 }
 
@@ -851,8 +1005,23 @@ async fn job_task_result(
         StatusCode::NOT_FOUND
     })?;
 
+    // Obtener worker_id de la tarea completada para actualizar métricas
+    let worker_id_opt = job.outstanding_tasks.get(&payload.task_id).cloned();
+    
     // Remove from outstanding tasks
     job.outstanding_tasks.remove(&payload.task_id);
+
+    // Actualizar métricas del worker (decrementar active_tasks, incrementar completed)
+    if let Some(worker_id) = worker_id_opt {
+        let mut registry = state.registry.write().await;
+        if let Some(worker) = registry.get_mut(&worker_id) {
+            worker.active_tasks = worker.active_tasks.saturating_sub(1);
+            worker.total_tasks_completed += 1;
+            // Estimación aproximada de CPU y memoria basada en tareas activas
+            worker.cpu_usage_percent = (worker.active_tasks as f64 * 10.0).min(100.0);
+            worker.memory_usage_mb = (worker.active_tasks as f64 * 5.0).max(10.0);
+        }
+    }
 
     // Update job progress
     if payload.error.is_some() {
@@ -906,8 +1075,14 @@ async fn job_task_result(
         } else {
             // All stages completed
             job.status = "completed".to_string();
+            job.end_time = Some(SystemTime::now());
             info!("Job {} all stages completed successfully", job_id);
         }
+    }
+    
+    // Si el job falló, también registrar end_time
+    if job.status == "failed" && job.end_time.is_none() {
+        job.end_time = Some(SystemTime::now());
     }
 
     Ok(Json(json!({
@@ -1092,8 +1267,17 @@ async fn start_stage(state: AppState, job_id: String, client: Client) {
             let mut backoff = Duration::from_secs(1);
             let mut success = false;
 
+            // Incrementar active_tasks del worker
+            {
+                let mut registry = state_clone.registry.write().await;
+                if let Some(worker) = registry.get_mut(&worker_id_clone) {
+                    worker.active_tasks += 1;
+                }
+            }
+
             while attempt < max_retries {
                 attempt += 1;
+                let attempt_start = SystemTime::now();
                 match client_clone
                     .post(&worker_url_clone)
                     .json(&task_clone)
@@ -1101,9 +1285,28 @@ async fn start_stage(state: AppState, job_id: String, client: Client) {
                     .await
                 {
                     Ok(resp) if resp.status().is_success() => {
+                        let latency = attempt_start.elapsed().unwrap_or(Duration::ZERO).as_millis() as f64;
+                        
+                        // Actualizar métricas del worker
+                        {
+                            let mut registry = state_clone.registry.write().await;
+                            if let Some(worker) = registry.get_mut(&worker_id_clone) {
+                                worker.latency_samples.push(latency);
+                                // Mantener solo las últimas 100 muestras
+                                if worker.latency_samples.len() > 100 {
+                                    worker.latency_samples.remove(0);
+                                }
+                                // Calcular promedio
+                                worker.average_latency_ms = worker.latency_samples.iter().sum::<f64>() / worker.latency_samples.len() as f64;
+                                if attempt > 1 {
+                                    worker.total_retries += 1;
+                                }
+                            }
+                        }
+                        
                         info!(
-                            "Task {} dispatched successfully to worker {} (attempt {})",
-                            task_clone.task_id, worker_url_clone, attempt
+                            "Task {} dispatched successfully to worker {} (attempt {}, latency: {:.2}ms)",
+                            task_clone.task_id, worker_url_clone, attempt, latency
                         );
                         success = true;
                         break;
@@ -1116,6 +1319,14 @@ async fn start_stage(state: AppState, job_id: String, client: Client) {
                             resp.status(),
                             attempt
                         );
+                        
+                        // Incrementar reintentos del worker
+                        if attempt < max_retries {
+                            let mut registry = state_clone.registry.write().await;
+                            if let Some(worker) = registry.get_mut(&worker_id_clone) {
+                                worker.total_retries += 1;
+                            }
+                        }
                     }
                     Err(e) => {
                         error!(
@@ -1125,14 +1336,32 @@ async fn start_stage(state: AppState, job_id: String, client: Client) {
                             e,
                             attempt
                         );
+                        
+                        // Incrementar reintentos del worker
+                        if attempt < max_retries {
+                            let mut registry = state_clone.registry.write().await;
+                            if let Some(worker) = registry.get_mut(&worker_id_clone) {
+                                worker.total_retries += 1;
+                            }
+                        }
                     }
                 }
 
-                tokio::time::sleep(backoff).await;
-                backoff *= 2;
+                if attempt < max_retries {
+                    tokio::time::sleep(backoff).await;
+                    backoff *= 2;
+                }
             }
 
             if !success {
+                // Decrementar active_tasks si falló
+                {
+                    let mut registry = state_clone.registry.write().await;
+                    if let Some(worker) = registry.get_mut(&worker_id_clone) {
+                        worker.active_tasks = worker.active_tasks.saturating_sub(1);
+                    }
+                }
+                
                 let mut jobs = state_clone.jobs.write().await;
                 if let Some(job) = jobs.get_mut(&job_id_dispatch) {
                     job.outstanding_tasks.remove(&task_id_clone);
@@ -1142,6 +1371,7 @@ async fn start_stage(state: AppState, job_id: String, client: Client) {
                         task_clone.operation.clone(),
                         task_clone.param,
                     ));
+                    job.total_retries += 1;
                 }
             }
         });

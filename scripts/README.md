@@ -31,6 +31,7 @@ Esta carpeta contiene scripts para facilitar el uso, demostración y pruebas del
 ### Documentación
 
 - **GUION_VIDEO.md**: Guion completo para la demostración en video (15 minutos)
+- **INSTRUCCIONESEJECUCION.MD**: Instrucciones detalladas para ejecutar pruebas y Docker Compose
 
 ## Uso
 

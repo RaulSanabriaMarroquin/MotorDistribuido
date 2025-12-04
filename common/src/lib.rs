@@ -216,6 +216,18 @@ pub struct JobProgress {
     pub completed_tasks: usize,  // tareas completadas exitosamente
     pub failed_tasks: usize,     // tareas que fallaron
     pub status: String,           // "running", "completed", "failed", etc.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_stages: Option<usize>,  // número total de etapas
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_stage: Option<usize>, // etapa actual
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_time_secs: Option<u64>,  // tiempo de inicio (Unix timestamp)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_time_secs: Option<u64>,    // tiempo de finalización (Unix timestamp)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_secs: Option<f64>,    // duración total en segundos
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_retries: Option<u64>,    // total de reintentos
 }
 
 
@@ -241,6 +253,59 @@ mod tests {
         let json = "\"DOWN\"";
         let status: WorkerStatus = serde_json::from_str(json).unwrap();
         assert_eq!(status, WorkerStatus::Down);
+    }
+
+    #[test]
+    fn test_job_progress_serialization_with_metrics() {
+        let progress = JobProgress {
+            job_id: "test-job".to_string(),
+            name: "test".to_string(),
+            total_tasks: 10,
+            completed_tasks: 5,
+            failed_tasks: 1,
+            status: "running".to_string(),
+            total_stages: Some(3),
+            current_stage: Some(1),
+            start_time_secs: Some(1000),
+            end_time_secs: None,
+            duration_secs: Some(5.5),
+            total_retries: Some(2),
+        };
+        
+        let json = serde_json::to_string(&progress).unwrap();
+        assert!(json.contains("\"job_id\":\"test-job\""));
+        assert!(json.contains("\"total_stages\":3"));
+        assert!(json.contains("\"current_stage\":1"));
+        assert!(json.contains("\"start_time_secs\":1000"));
+        assert!(json.contains("\"duration_secs\":5.5"));
+        assert!(json.contains("\"total_retries\":2"));
+    }
+
+    #[test]
+    fn test_job_progress_serialization_without_optional_fields() {
+        let progress = JobProgress {
+            job_id: "test-job".to_string(),
+            name: "test".to_string(),
+            total_tasks: 10,
+            completed_tasks: 5,
+            failed_tasks: 0,
+            status: "running".to_string(),
+            total_stages: None,
+            current_stage: None,
+            start_time_secs: None,
+            end_time_secs: None,
+            duration_secs: None,
+            total_retries: None,
+        };
+        
+        let json = serde_json::to_string(&progress).unwrap();
+        // Verificar que los campos opcionales no están en el JSON
+        assert!(!json.contains("total_stages"));
+        assert!(!json.contains("current_stage"));
+        assert!(!json.contains("start_time_secs"));
+        assert!(!json.contains("end_time_secs"));
+        assert!(!json.contains("duration_secs"));
+        assert!(!json.contains("total_retries"));
     }
 
     #[test]
