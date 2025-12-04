@@ -85,7 +85,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/tasks/execute", post(execute_task))
         .with_state((master_url_clone, http_client_clone, task_execution_delay_secs));
 
-    let addr = format!("{}:{}", host, port);
+    // Para Docker, usar 0.0.0.0 para aceptar conexiones de otros contenedores
+    let bind_host = if host == "127.0.0.1" && std::env::var("DOCKER").is_ok() {
+        "0.0.0.0"
+    } else {
+        &host
+    };
+    let addr = format!("{}:{}", bind_host, port);
     let listener = TcpListener::bind(&addr).await?;
     info!(%addr, "Starting worker HTTP server (/health, /api/v1/tasks/execute)");
 
