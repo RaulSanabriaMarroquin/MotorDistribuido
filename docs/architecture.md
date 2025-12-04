@@ -84,13 +84,13 @@ Aquí se representa cómo el sistema NO usa threads tradicionales para cada cone
 ```mermaid
 flowchart LR
 
-    subgraph MASTER — Tokio Runtime
+    subgraph Master_Tokio_Runtime
         A[[REST API Handler Task]]
         B[[Heartbeat Monitor Task]]
         C[[Job Scheduler Task]]
     end
 
-    subgraph WORKER — Tokio Runtime
+    subgraph Worker_Tokio_Runtime
         X[[Task Executor]]
         H[[Heartbeat Loop]]
     end
