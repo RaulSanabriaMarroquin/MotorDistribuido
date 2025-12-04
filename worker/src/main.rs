@@ -10,6 +10,7 @@ use common::{
     HeartbeatRequest, RegisterRequest, RegisterResponse, TaskAssignment, TaskResult,
     MESSAGE_VERSION,
 };
+use worker::execute_operation;
 use reqwest::Client;
 use tokio::{net::TcpListener, time::sleep};
 use tracing::{error, info};
@@ -152,112 +153,11 @@ async fn execute_task(
     }
 
     // Execute the operation
-    let mut output: Vec<i64> = Vec::new();
-    let mut task_error: Option<String> = None;
-
-    match payload.operation.as_str() {
-        "map_add" => {
-            let param = payload.param.unwrap_or(0);
-            output = payload.input.iter().map(|x| x + param).collect();
-        }
-        "map_mul" => {
-            let param = payload.param.unwrap_or(1);
-            output = payload.input.iter().map(|x| x * param).collect();
-        }
-        "filter_gt" => {
-            let threshold = payload.param.unwrap_or(0);
-            output = payload
-                .input
-                .iter()
-                .copied()
-                .filter(|x| *x > threshold)
-                .collect();
-        }
-        "filter_lt" => {
-            let threshold = payload.param.unwrap_or(0);
-            output = payload
-                .input
-                .iter()
-                .copied()
-                .filter(|x| *x < threshold)
-                .collect();
-        }
-        "reduce_by_key" => {
-            // ensure even length
-            if payload.input.len() % 2 != 0 {
-                task_error = Some("reduce_by_key: input length is not even (key/value mismatch)".into());
-            } else {
-                let mut map = std::collections::HashMap::<i64, i64>::new();
-
-                // accumulate values by key
-                for pair in payload.input.chunks(2) {
-                    let key = pair[0];
-                    let val = pair[1];
-                    *map.entry(key).or_insert(0) += val;
-                }
-
-                // produce sorted interleaved output
-                let mut kv_pairs: Vec<(i64, i64)> = map.into_iter().collect();
-                kv_pairs.sort_by_key(|p| p.0);
-
-                output = kv_pairs
-                    .into_iter()
-                    .flat_map(|(k,v)| vec![k, v])
-                    .collect();
-            }
-        }
-            "join" => {
-            // Validate input
-            if payload.left.len() % 2 != 0 || payload.right.len() % 2 != 0 {
-                task_error = Some("JOIN: left or right length is not even (k,v pairs malformed)".into());
-            } else {
-                // Build maps for left and right collections
-                let mut left_map = std::collections::HashMap::<i64, i64>::new();
-                let mut right_map = std::collections::HashMap::<i64, i64>::new();
-
-                for pair in payload.left.chunks(2) {
-                    left_map.insert(pair[0], pair[1]);
-                }
-                for pair in payload.right.chunks(2) {
-                    right_map.insert(pair[0], pair[1]);
-                }
-
-                // Compute intersection keys
-                let mut result: Vec<i64> = Vec::new();
-                let mut keys: Vec<i64> = left_map
-                    .keys()
-                    .filter(|k| right_map.contains_key(k))
-                    .cloned()
-                    .collect();
-
-                // Sort keys for deterministic output
-                keys.sort();
-
-                // Join output: [k, left_val, right_val, ...]
-                for k in keys {
-                    let lv = left_map[&k];
-                    let rv = right_map[&k];
-                    result.push(k);
-                    result.push(lv);
-                    result.push(rv);
-                }
-
-                output = result;
-            }
-        }
-        "flat_map" => {
-            let mut out = Vec::new();
-            for x in &payload.input {
-                // ejemplo sencillo: produce dos valores
-                out.push(*x);
-                out.push(*x * 2);
-            }
-            output = out;
-        }
-        _ => {
-            let msg = format!("Unknown operation: {}", payload.operation);
-            error!("{}", msg);
-            task_error = Some(msg);
+    let (output, task_error) = match execute_operation(&payload) {
+        Ok(result) => (result, None),
+        Err(err) => {
+            error!("Task execution error: {}", err);
+            (Vec::new(), Some(err))
         }
     };
 
