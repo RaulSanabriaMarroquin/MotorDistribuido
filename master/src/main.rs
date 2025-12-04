@@ -1,3 +1,5 @@
+mod shutdown;
+
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -117,7 +119,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
     info!("Master node listening on 127.0.0.1:8080");
 
-    axum::serve(listener, app).await?;
+    use shutdown::wait_for_shutdown_signal;
+
+    let server = axum::serve(listener, app);
+
+    tokio::select! {
+        result = server => {
+            if let Err(e) = result {
+                eprintln!("Error en el servidor Axum: {:?}", e);
+            }
+        }
+
+        _ = wait_for_shutdown_signal() => {
+            info!("Master: apagando servidor HTTP…");
+        }
+    };
+
+    info!("Master detenido correctamente.");
 
     info!("Master node shutting down...");
     Ok(())

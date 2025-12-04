@@ -1,5 +1,6 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+mod shutdown;
 use axum::{
     extract::Json,
     response::Json as AxumJson,
@@ -124,7 +125,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // 4) Mantener el worker corriendo
-    axum::serve(listener, app).await?;
+    use shutdown::wait_for_shutdown_signal;
+
+    let server = axum::serve(listener, app);
+
+    tokio::select! {
+        result = server => {
+            if let Err(e) = result {
+                error!("Servidor del worker falló: {:?}", e);
+            }
+        }
+
+        _ = wait_for_shutdown_signal() => {
+            info!("Worker: cerrando servidor HTTP…");
+
+            // Último heartbeat opcional
+            let hb_url = format!("{}/api/v1/workers/{}/heartbeat", master_url, worker_id);
+            let _ = http_client.post(&hb_url)
+                .json(&common::HeartbeatRequest {
+                    version: Some(common::MESSAGE_VERSION.to_string()),
+                    timestamp: None,
+                })
+                .send()
+                .await;
+
+            info!("Worker: último heartbeat enviado.");
+        }
+    };
+
+    info!("Worker apagado correctamente.");
     Ok(())
 }
 
