@@ -1,295 +1,302 @@
-# Arquitectura del Sistema Distribuido - Semana 1
+# Arquitectura del Sistema Distribuido Proyecto Ruta A — Batch DAG (mini-Spark)
 
 ## Descripción General
 
-El sistema distribuido está compuesto por tres tipos de procesos principales:
+El sistema implementa un motor distribuido de procesamiento batch inspirado en Spark, basado en un modelo master/worker y un cliente ligero de línea de comandos. La idea central es que el master mantiene todo el estado global (workers registrados, jobs, tareas y métricas), mientras que los workers son procesos relativamente simples que ejecutan operaciones puras sobre datos (map, filter, reduce_by_key, join) y reportan resultados. El client actúa como interfaz de usuario: envía trabajos al master, consulta el progreso y lista los workers disponibles.
 
-- **Master**: Nodo coordinador central que gestiona el registro de workers, monitorea su estado mediante heartbeats y mantiene la visión global del sistema.
+Cada componente es independiente:
 
-- **Workers**: Nodos ejecutores que se registran con el master y envían periódicamente señales de vida (heartbeats) para indicar que están activos y disponibles.
+- **master**: servidor central HTTP que coordina y planifica el trabajo.
 
-- **Client**: Aplicación cliente que interactúa con el master para consultar el estado del sistema y realizar operaciones de gestión básicas.
+- **worker**: ejecutor que se registra ante el master, recibe tareas y las procesa.
 
-## Modelo de IPC (Inter-Process Communication)
+- **client**: CLI que habla solo con el master usando HTTP/JSON.
 
-### Protocolo: HTTP/JSON sobre TCP
+El objetivo arquitectónico es separar el master del tabajo que para eso sirven los workers, usando HTTP asíncrono y estructuras de datos en memoria para permitir iterar rápido.
 
-- **Protocolo de transporte**: TCP/IP
-- **Protocolo de aplicación**: HTTP/1.1
-- **Formato de datos**: JSON
-- **Framework**: Axum (async HTTP para Rust/Tokio)
+## Procesos
 
-### Versionado de Mensajes
+En tiempo de ejecución normalmente hay:
 
-Todos los mensajes intercambiados entre componentes incluyen un campo de versión para garantizar compatibilidad:
+- Un proceso master escuchando en 127.0.0.1:8080.
 
-```json
-{
-  "version": "1.0",
-  "message_type": "...",
-  "payload": { ... }
+- Uno o más procesos worker, cada uno en un puerto configurable (WORKER_PORT).
+
+- Uno o varios procesos client invocados desde la terminal para enviar jobs y consultar estado.
+
+Toda comunicación se hace por HTTP/JSON.
+
+## Hilos y Tareas Asíncronas
+
+Dentro de cada proceso se usa el runtime asíncrono **Tokio**. Esto significa que el código no crea manualmente threads para cada conexión, sino que lanza tasks ligeras que el runtime multiplexa sobre un pool de threads.
+
+En **master**, el servidor HTTP de **Axum** (framework de http) levanta una task por conexión entrante (por ejemplo, registros de workers, heartbeats o envío de resultados de tareas). Además, se lanza una task de fondo llamada monitor_workers, que se ejecuta periódicamente y revisa el estado de los workers y de las tareas pendientes. Esta task es esencial para la tolerancia a fallos, pues detecta workers caídos y dispara la replanificación de tareas.
+
+En el **worker**, se levanta un pequeño servidor HTTP que expone /api/v1/tasks/execute, y en paralelo se lanza una task en segundo plano que envía heartbeats periódicos al master. Cada solicitud de ejecución de tarea se maneja como una task independiente, de forma que un worker puede procesar varias tareas en paralelo (limitado por el número de threads y el tipo de trabajo).
+
+El **client** también usa **Tokio**, pero su uso es mucho más simple: hace solicitudes HTTP puntuales (list-workers, submit-job, get-progress) y termina.
+
+## Protocolo e Intercambio de Mensajes
+
+Toda la comunicación entre componentes se realiza mediante:
+
+- Transporte: TCP/IP
+
+- Protocolo de aplicación: HTTP/1.1
+
+- Formato de mensajes: JSON (serializado/deserializado con serde)
+
+- Framework: Axum en el lado servidor (master y worker), reqwest en el lado cliente.
+
+Los mensajes incluyen un campo de versión (MESSAGE_VERSION) para permitir la evolución del protocolo sin romper compatibilidad. Por ejemplo, el registro de un worker (RegisterRequest / RegisterResponse) y los heartbeats (HeartbeatRequest / HeartbeatResponse) llevan esta versión de mensaje.
+
+## API expuesta por el Master
+
+El master expone una serie de endpoints REST:
+
+- POST /api/v1/workers/register
+Endpoint al que se conectan los workers al iniciar. El worker envía su host, port y opcionalmente su versión de mensaje. El master le asigna un worker_id único (p.ej. w001) y lo registra en su tabla de workers, marcándolo como Up.
+
+- POST /api/v1/workers/:id/heartbeat
+Endpoint que recibe heartbeats periódicos de cada worker. Al llegar un heartbeat, el master actualiza el last_heartbeat del worker y, si estaba marcado como Down, lo pasa nuevamente a Up.
+
+- GET /api/v1/workers
+Devuelve una lista de workers registrados con su estado actual (Up/Down) y el tiempo del último heartbeat. Este endpoint es consumido por el client list-workers.
+
+- POST /api/v1/jobs/submit
+Recibe un JobSpec desde el cliente, que describe:
+   - el nombre del job,
+   - la fuente de datos (DatasetSource: inline, archivo de texto, CSV o JSONL),
+   - los stages que forman el DAG (por ejemplo: map_add:5, filter_gt:10, reduce_by_key, join, etc.),
+   - y parámetros como chunk_size.
+
+El master carga el dataset, lo parte en chunks o particiones y crea un JobInfo en memoria con toda la información necesaria para seguir la ejecución del job.
+
+- GET /api/v1/jobs/:id/progress
+Expone el estado de un job concreto: número de tareas totales, tareas completadas, tareas falladas y estado global (running, stage_complete, completed, failed). Este endpoint es el que usa client get-progress.
+
+- POST /api/v1/jobs/:id/task_result
+Es llamado por los workers al finalizar una tarea. Contiene el resultado parcial (output) y, opcionalmente, un mensaje de error. El master actualiza los contadores del job, acumula la salida del stage y decide si el stage ha terminado y si se puede avanzar al siguiente.
+
+- POST /api/v1/jobs/:id/next_stage
+Permite disparar manualmente la ejecución del siguiente stage de un job multi-etapa. Internamente delega en la función start_stage, que lee la salida del stage anterior, realiza el shuffle/particionamiento y envía nuevas tareas a los workers.
+
+- GET /api/v1/metrics
+Devuelve métricas globales del sistema: jobs enviados, tareas completadas, tareas falladas y número de workers Up/Down. Esta API sirve para la observabilidad básica en la última etapa del proyecto.
+
+## API expuesta por los Workers
+
+Cada worker tiene un único endpoint relevante:
+
+- POST /api/v1/tasks/execute
+El master envía una TaskAssignment que describe:
+
+   - job_id y task_id,
+
+   - operación a ejecutar (map_add, map_mul, filter_gt, filter_lt, reduce_by_key, join, flat_map, etc.),
+
+   - datos de entrada (input, left, right),
+
+   - parámetro opcional (param),
+
+   - identificador de stage (stage_id) y número de reintento.
+
+El worker ejecuta la operación localmente, produce un vector de salida (output) y luego envía un TaskResult de vuelta al master usando el endpoint de resultados descrito antes. Opcionalmente puede simular tareas largas introduciendo un retraso configurable (TASK_EXECUTION_DELAY_SECS).
+
+Modelo de Memoria y Estructuras de Estado
+
+El master mantiene todo su estado en memoria dentro de la estructura AppState, que se comparte entre handlers HTTP mediante Arc<RwLock<...>>. Esto permite acceso concurrente: múltiples peticiones pueden leer al mismo tiempo, y las escrituras se hacen con exclusión mutua.
+
+struct AppState {
+    registry: Arc<RwLock<HashMap<String, WorkerInfo>>>,
+    jobs: Arc<RwLock<HashMap<String, JobInfo>>>,
+    metrics: Arc<RwLock<Metrics>>,
 }
-```
 
-Esto permite evolución del protocolo sin romper compatibilidad entre versiones diferentes de los componentes.
+## Registry de Workers
 
-## Responsabilidades - Semana 1
+La tabla registry almacena objetos WorkerInfo, que contienen:
 
-### Master
+- id: identificador lógico (w001, w002, …),
 
-1. **Registro de Workers**
-   - Aceptar solicitudes de registro de nuevos workers
-   - Asignar identificadores únicos a cada worker
-   - Mantener un registro de todos los workers activos
+- host y port: dirección donde el master puede contactar al worker,
 
-2. **Gestión de Heartbeats**
-   - Recibir y procesar heartbeats periódicos de los workers
-   - Actualizar el timestamp de último contacto para cada worker
-   - Validar que los heartbeats provengan de workers registrados
+- last_heartbeat: SystemTime del último heartbeat recibido,
 
-3. **Detección de Fallos**
-   - Monitorear el tiempo transcurrido desde el último heartbeat de cada worker
-   - Marcar workers como DOWN si no reciben heartbeats dentro del tiempo de espera configurado
-   - Mantener estado histórico de workers (UP/DOWN)
+- status: WorkerStatus::Up o WorkerStatus::Down.
 
-4. **API de Consulta**
-   - Exponer endpoints HTTP para que clientes consulten el estado del sistema
-   - Proporcionar información sobre workers registrados y su estado actual
-   - Reportar estadísticas básicas del sistema
+Los handlers de registro y heartbeats escriben aquí; el monitor de workers lo lee y actualiza el estado en función del tiempo transcurrido desde last_heartbeat.
 
-### Worker
+## Estado de los Jobs
 
-1. **Registro Inicial**
-   - Conectarse al master al iniciar
-   - Enviar solicitud de registro con información del worker (puerto, capacidades básicas)
-   - Recibir y almacenar su identificador único asignado por el master
+Cada trabajo enviado al master se representa con un JobInfo. Esta estructura es el corazón de la planificación y tolerancia a fallos en memoria:
 
-2. **Heartbeats Periódicos**
-   - Enviar heartbeats periódicamente al master (ej: cada 5 segundos)
-   - Incluir identificador del worker y timestamp en cada heartbeat
-   - Manejar errores de comunicación y reintentos
+   - Información básica: job_id, name, status.
 
-3. **Gestión de Conexión**
-   - Detectar pérdida de conexión con el master
-   - Implementar lógica de reconexión automática si la conexión se pierde
-   - Re-registrarse si es necesario tras una reconexión
+   - Conteo de tareas: total_tasks, completed_tasks, failed_tasks.
 
-### Client
+   - Seguimiento de tareas en vuelo: outstanding_tasks: HashMap<task_id, worker_id>.
 
-1. **Consulta de Estado**
-   - Conectarse al master para consultar el estado actual del sistema
-   - Visualizar lista de workers registrados y su estado (UP/DOWN)
-   - Obtener información básica de cada worker
+   - Reasignación: reassign_queue, donde se encolan tareas que deben reintentarse.
 
-2. **Interfaz de Usuario**
-   - Proporcionar una interfaz (CLI o simple) para interactuar con el sistema
-   - Mostrar información del sistema de forma legible
+   - Payloads persistidos: task_payloads, que guardan la entrada y parámetros de cada tarea para poder reconstruirla cuando un worker cae.
 
-## Modelo de Concurrencia: Tokio Runtime
+   - Multi-stage DAG: una lista de stages y un índice current_stage para saber qué etapa está en ejecución.
 
-### Runtime Asíncrono
+   - Resultado intermedio: stage_output, donde se acumula la salida de cada stage (típicamente como pares (key, value) o tuplas en caso de join).
 
-El sistema utiliza **Tokio**, el runtime asíncrono de Rust, para manejar concurrencia mediante el modelo de **tasks** (tareas) en lugar de threads tradicionales.
+Gracias a estas estructuras, el master puede responder preguntas de progreso, detectar que un stage terminó, preparar el shuffle para el siguiente stage y reintentar tareas sin perder información.
 
-### Conceptos Clave
+## Métricas en Memoria
 
-- **Tasks**: Unidades de trabajo asíncronas que se ejecutan en el runtime de Tokio
-- **Runtime**: Gestiona un pool de threads del sistema operativo (worker threads)
-- **Event Loop**: Maneja I/O asíncrono y despacha tareas a threads disponibles
+El módulo Metrics guarda contadores globales:
 
-### Ventajas
+   - jobs_submitted
 
-- **Escalabilidad**: Miles de tasks pueden ejecutarse concurrentemente con solo unos pocos threads del SO
-- **Eficiencia**: Las tasks se bloquean solo en operaciones de I/O reales, no en esperas activas
-- **Rendimiento**: Alto throughput de conexiones HTTP concurrentes
+   - tasks_completed
 
-### En Nuestro Sistema
+   - tasks_failed
 
-- Cada conexión HTTP es manejada por una task independiente
-- El master puede gestionar múltiples workers y clientes concurrentemente
-- Los workers ejecutan su loop de heartbeats como una task asíncrona
-- Operaciones de red (HTTP requests/responses) no bloquean otras operaciones
+Estos campos se actualizan cada vez que se recibe un job nuevo o un resultado de tarea, y se exponen vía /api/v1/metrics.
 
-## Flujos de Operación
+## Planificación y Ejecución de Jobs
 
-### 1. Registro de Worker
+La planificación ocurre en dos niveles: dentro de un stage (cómo se parte el dataset en tareas) y entre stages (cómo se propagan los resultados a la siguiente etapa).
 
-```
-┌─────────┐                    ┌─────────┐
-│ Worker  │                    │ Master  │
-└────┬────┘                    └────┬────┘
-     │                              │
-     │  1. POST /register           │
-     │     {                        │
-     │       "port": 8081,          │
-     │       "host": "127.0.0.1"    │
-     │     }                        │
-     ├─────────────────────────────>│
-     │                              │
-     │                              │ 2. Validar request
-     │                              │ 3. Generar worker_id único
-     │                              │ 4. Registrar worker (estado: UP)
-     │                              │
-     │  5. 200 OK                   │
-     │     {                        │
-     │       "worker_id": "w001",   │
-     │       "master_endpoint": ... │
-     │     }                        │
-     │<─────────────────────────────┤
-     │                              │
-     │ 6. Almacenar worker_id       │
-     │ 7. Iniciar loop de heartbeats│
-     │                              │
-```
+## Ingreso de un Job
 
-**Pasos detallados:**
+Cuando el cliente llama a submit-job, construye un **JobSpec** que puede venir en modo “nuevo” (con source + stages) o modo legado (con operation + input). El master recibe este **JobSpec** en submit_job.
 
-1. Worker envía solicitud POST a `/register` con información básica (puerto, host)
-2. Master valida la solicitud y genera un `worker_id` único (ej: "w001", "w002", ...)
-3. Master registra el worker en su base de datos interna con estado `UP`
-4. Master responde con el `worker_id` asignado y endpoints de comunicación
-5. Worker almacena el `worker_id` recibido
-6. Worker inicia su loop de envío de heartbeats periódicos
+Primero se construye la lista de stages:
 
-### 2. Heartbeats Periódicos
+   - Si el job viene con stages, se usa directamente (DAG multi-etapa).
 
-```
-┌─────────┐                    ┌─────────┐
-│ Worker  │                    │ Master  │
-└────┬────┘                    └────┬────┘
-     │                              │
-     │  [Cada 5 segundos]           │
-     │                              │
-     │  1. POST /heartbeat          │
-     │     {                        │
-     │       "worker_id": "w001",   │
-     │       "timestamp": 1234567890│
-     │     }                        │
-     ├─────────────────────────────>│
-     │                              │
-     │                              │ 2. Validar worker_id
-     │                              │ 3. Actualizar last_seen
-     │                              │ 4. Verificar estado (UP)
-     │                              │
-     │  5. 200 OK                   │
-     │     { "status": "ok" }       │
-     │<─────────────────────────────┤
-     │                              │
-     │  [Continúa loop...]          │
-     │                              │
-```
+   - Si no, se crea un único stage a partir de operation y param (modo semana 1).
 
-**Pasos detallados:**
+Luego se carga el dataset de entrada mediante DatasetSource:
 
-1. Worker envía POST a `/heartbeat` cada N segundos (configurable, ej: 5s) con su `worker_id` y timestamp
-2. Master valida que el `worker_id` existe y está registrado
-3. Master actualiza el campo `last_seen` del worker con el timestamp actual
-4. Master verifica que el worker esté en estado `UP` (si estaba DOWN, podría cambiarlo a UP)
-5. Master responde con confirmación
-6. Worker continúa el loop periódico
+   - Inline: un vector de enteros enviado directamente por el cliente.
 
-### 3. Marcado de Workers como DOWN
+   - File: archivo de texto plano donde se parsean números separados por comas, espacios o saltos de línea.
 
-```
-┌─────────┐                    ┌─────────┐
-│ Master  │                    │         │
-└────┬────┘                    │ Worker  │
-     │                         │ (caído) │
-     │  [Cada X segundos]      │         │
-     │                         │         │
-     │  1. Tarea de monitoreo  │         │
-     │     ejecuta check       │         │
-     │                         │         │
-     │  2. Para cada worker:   │         │
-     │     - Calcular tiempo   │         │
-     │       desde last_seen   │         │
-     │     - Si > timeout      │         │
-     │       (ej: 15s):        │         │
-     │       • Cambiar estado  │         │
-     │         a DOWN          │         │
-     │       • Registrar       │         │
-     │         timestamp       │         │
-     │                         │         │
-     │  3. Worker "w001"       │         │
-     │     marcado como DOWN   │         │
-     │                         │         │
-```
+   - Csv: archivo CSV del que se extraen números por columnas.
 
-**Pasos detallados:**
+   - Jsonl: archivo JSONL con un campo numérico value en cada línea.
 
-1. El master ejecuta una tarea de monitoreo periódico (ej: cada 3 segundos)
-2. Para cada worker registrado:
-   - Calcula el tiempo transcurrido desde `last_seen`
-   - Si el tiempo excede el timeout configurado (ej: 15 segundos = 3 heartbeats faltados)
-   - Cambia el estado del worker de `UP` a `DOWN`
-   - Registra el timestamp del cambio de estado
-3. El worker queda marcado como DOWN hasta que se reconecte y envíe un heartbeat válido
+## Particionado y Asignación de Tareas
 
-**Nota**: Si un worker marcado como DOWN envía un heartbeat posterior, el master puede cambiarlo de vuelta a `UP`.
+Para operaciones normales (map, filter, reduce_by_key, flat_map), el master divide el vector de entrada en chunks de tamaño fijo (chunk_size). Cada chunk se transforma en una **TaskAssignment** y se asigna a un worker usando un esquema simple de round-robin: la tarea task-0 al primer worker, task-1 al segundo, etc.
 
-## Diagrama de Arquitectura
+Para la operación join, la lógica es distinta: se asume que hay dos colecciones de pares (key, value) (lado izquierdo y lado derecho). El master particiona ambos lados por clave, usando key % num_partitions para distribuir las claves en particiones. Cada partición se manda como una tarea de tipo join, donde el worker construye mapas en memoria y genera la intersección de claves [k, left_val, right_val, ...].
 
-```
-                    ┌─────────────┐
-                    │   Client    │
-                    │  (Consulta) │
-                    └──────┬──────┘
-                           │
-                           │ HTTP/JSON
-                           │
-                    ┌──────▼──────┐
-                    │             │
-                    │   Master    │
-                    │             │
-                    │ ┌─────────┐ │
-                    │ │Registry │ │  ┌─────────────┐
-                    │ │(Workers)│ │  │   Worker 1  │
-                    │ └─────────┘ │◄─┤  (w001)     │
-                    │             │  └─────────────┘
-                    │ ┌─────────┐ │  Heartbeat
-                    │ │Monitor  │ │  ┌─────────────┐
-                    │ │(UP/DOWN)│ │  │   Worker 2  │
-                    │ └─────────┘ │◄─┤  (w002)     │
-                    │             │  └─────────────┘
-                    │ ┌─────────┐ │  Heartbeat
-                    │ │  API    │ │  ┌─────────────┐
-                    │ │(HTTP)   │ │  │   Worker N  │
-                    │ └─────────┘ │◄─┤  (w00N)     │
-                    └─────────────┘  └─────────────┘
-                           │
-                           │ HTTP/JSON
-                           │
-                    ┌──────▼──────┐
-                    │   Client    │
-                    │  (Consulta) │
-                    └─────────────┘
+En ambos casos, antes de dar una tarea el master:
 
-Componentes del Master:
-- Registry: Base de datos de workers registrados
-- Monitor: Tarea que verifica heartbeats y marca workers DOWN
-- API: Servidor HTTP que expone endpoints REST
-```
+1. Guarda el payload de la tarea en **task_payloads** para poder reintentarla.
 
-## Evolución Futura (Semanas 2-4)
+2. Marca la tarea como pendiente en **outstanding_tasks**.
 
-### Semana 2: Ejecución de Tareas
-- El master recibirá solicitudes de ejecución de tareas desde clientes
-- Los workers ejecutarán tareas asignadas por el master
-- Implementación de cola de tareas y asignación inicial
+El envío de cada tarea se hace en una task Tokio separada, con reintentos y backoff exponencial: si el worker no responde o devuelve un error HTTP, la asignación se reintenta hasta tres veces. Si finalmente falla, la tarea se retira de **outstanding_tasks** y se encola en **reassign_queue** para intentar asignarla a otro worker más adelante.
 
-### Semana 3: Programación y Balanceo de Carga
-- Algoritmos de scheduling de tareas (FIFO, Round-Robin, etc.)
-- Balanceo de carga entre workers disponibles
-- Gestión de prioridades de tareas
+## Avance de Stages (Shuffle y DAG)
 
-### Semana 4: Tolerancia a Fallos y Recuperación
-- Reasignación automática de tareas cuando un worker cae
-- Persistencia de estado del master
-- Checkpointing y recuperación de tareas en progreso
-- Reintentos y manejo de errores robusto
+Cada vez que un worker termina una tarea, llama a /api/v1/jobs/:id/task_result. El master:
 
-### Consideraciones de Arquitectura
-- La estructura base de registro y monitoreo de la Semana 1 será fundamental para las semanas posteriores
-- Los mecanismos de comunicación HTTP/JSON establecidos se mantendrán y extenderán
-- El sistema de detección de fallos será crucial para la tolerancia a fallos en Semana 4
+1. Saca la tarea de **outstanding_tasks**.
 
+2. Incrementa **completed_tasks** o **failed_tasks**.
+
+3. Añade el *output** de la tarea a stage_output (para operaciones normales o join).
+
+Cuando completed_tasks + failed_tasks == total_tasks, el master sabe que el stage actual terminó:
+
+- Si hay fallos (failed_tasks > 0), el job se marca como **failed**.
+
+- Si no hay fallos y existe un siguiente stage, el job se marca como **stage_complete** y queda listo para que se dispare start_stage (vía endpoint o vía monitor).
+
+- Si no hay más stages, el job se marca como **completed**.
+
+La función **start_stage** toma **stage_output**, la interpreta como una secuencia de pares (key, value) y aplica un shuffle: reparte los pares en particiones basadas en la clave (key % num_workers), generando nuevas tareas para el siguiente stage. De nuevo se realiza asignación round-robin y se reinician los contadores de tareas en el **JobInfo**.
+
+## Mecanismos de Fallos y Reintentos
+
+La arquitectura incorpora tolerancia a fallos en varios niveles.
+
+### Detección de Workers Caídos (Heartbeats)
+
+Cada worker ejecuta en segundo plano una tarea que envía heartbeats al master cada **HEARTBEAT_INTERVAL_SECS** segundos. El master, por su parte, ejecuta monitor_workers periódicamente:
+
+   1. Calcula el tiempo desde el último heartbeat (now - last_heartbeat).
+
+   2. Si ese tiempo excede HEARTBEAT_TIMEOUT_SECS, el worker pasa de Up a Down.
+
+   3. Cada cambio se loguea, y el worker permanece Down hasta que vuelva a enviar un heartbeat.
+
+Este mecanismo evita asumir que un worker está disponible cuando lleva demasiado tiempo sin responder.
+
+### Replanificación de Tareas
+
+Cuando uno o varios workers se marcan como **Down**, el monitor recorre todos los **JobInfo**:
+
+   - Busca tareas en outstanding_tasks asignadas a esos workers.
+
+   - Para cada una, quita la asignación y la mueve a reassign_queue.
+
+   - Recupera el payload original (input, operación, parámetro) desde task_payloads para poder reconstruir una TaskAssignment.
+
+A continuación, el monitor obtiene la lista de workers que siguen **Up** y trata de reasignar tareas de **reassign_queue** a estos workers de forma round-robin, usando de nuevo reintentos y backoff para el envío. Si el envío falla repetidamente, la tarea podría quedar sin ejecutar y ser procesada en iteraciones futuras del monitor.
+
+### Reintentos de Envío de Tareas
+
+Tanto en el flujo normal como en la replanificación, el envío de una tarea a un worker se hace con un bucle de reintentos:
+
+   - Se intenta hacer el POST al worker hasta un máximo de 3 veces.
+
+   - Entre intentos se espera un tiempo que crece exponencialmente (1s, 2s, 4s, …).
+
+   - Si después de los intentos sigue fallando, la tarea se considera no despachada y vuelve a la cola de reasignación o se marca para tratamiento posterior.
+
+Este enfoque cubre tanto fallos temporales de red como caídas de procesos worker.
+
+flowchart TD
+
+    %% CLIENTE
+    Client[[CLIENT CLI]]
+    Client -->|"HTTP/JSON"| MasterAPI
+
+    %% MASTER
+    subgraph MasterNode[MASTER]
+        MasterAPI((REST API))
+        REG[(Worker Registry\n+ Job Table)]
+        MON[(Monitor de Workers\n+ Replanificación)]
+        MET[(Métricas Globales)]
+    end
+
+    MasterAPI --> REG
+    MasterAPI --> MET
+    MON --> REG
+    MON --> REG
+
+    %% WORKERS
+    subgraph Workers[Workers]
+        W1((Worker 1))
+        W2((Worker 2))
+        W3((Worker N))
+    end
+
+    %% Registro y heartbeats
+    W1 -->|"register + heartbeat"| MasterAPI
+    W2 -->|"register + heartbeat"| MasterAPI
+    W3 -->|"register + heartbeat"| MasterAPI
+
+    %% Asignación de tareas
+    MasterAPI -->|"TaskAssignment\n(map/filter/reduce_by_key/join)"| W1
+    MasterAPI -->|"TaskAssignment"| W2
+    MasterAPI -->|"TaskAssignment"| W3
+
+    %% Resultados de tareas
+    W1 -->|"TaskResult\n(output + error)"| MasterAPI
+    W2 -->|"TaskResult"| MasterAPI
+    W3 -->|"TaskResult"| MasterAPI
+
+    %% Interacción del cliente
+    Client <-->|"list-workers\nsubmit-job\nget-progress\nmetrics"| MasterAPI
