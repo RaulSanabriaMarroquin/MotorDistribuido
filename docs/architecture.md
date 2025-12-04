@@ -257,6 +257,7 @@ Tanto en el flujo normal como en la replanificación, el envío de una tarea a u
 
 Este enfoque cubre tanto fallos temporales de red como caídas de procesos worker.
 
+```mermaid
 flowchart TD
 
     %% CLIENTE
@@ -300,3 +301,4 @@ flowchart TD
 
     %% Interacción del cliente
     Client <-->|"list-workers\nsubmit-job\nget-progress\nmetrics"| MasterAPI
+```
