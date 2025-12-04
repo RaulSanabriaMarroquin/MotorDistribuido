@@ -12,6 +12,7 @@ use common::{
     SubmitJobResponse, TaskAssignment, TaskResult, WorkerListItem, WorkerStatus,
     WorkersListResponse, Stage, DatasetSource,  MESSAGE_VERSION,
 };
+use master::{parse_csv_numbers, parse_jsonl_numbers, parse_plain_numbers, split_into_chunks};
 use reqwest::Client;
 use serde_json::json;
 use std::{
@@ -371,17 +372,7 @@ async fn load_dataset(source: &DatasetSource) -> Vec<i64> {
     }
 }
 
-/// Split input data into chunks for parallel task execution
-fn split_into_chunks(input: Vec<i64>, chunk_size: usize) -> Vec<Vec<i64>> {
-    if chunk_size == 0 {
-        return vec![input];
-    }
-
-    input
-        .chunks(chunk_size)
-        .map(|chunk| chunk.to_vec())
-        .collect()
-}
+// Function moved to master::lib
 
 /// Carga el dataset inicial de un job, ya sea desde `source` (nuevo)
 /// o desde `input` (modo viejo).
@@ -411,43 +402,7 @@ fn load_input_data(payload: &JobSpec) -> Result<Vec<i64>, std::io::Error> {
     }
 }
 
-fn parse_plain_numbers(content: &str) -> Vec<i64> {
-    content
-        .split(|c: char| c == ',' || c == '\n' || c == ' ' || c == '\t')
-        .filter_map(|s| s.trim().parse::<i64>().ok())
-        .collect()
-}
-
-fn parse_csv_numbers(content: &str) -> Vec<i64> {
-    let mut result = Vec::new();
-    for line in content.lines() {
-        for token in line.split(',') {
-            if let Ok(v) = token.trim().parse::<i64>() {
-                result.push(v);
-            }
-        }
-    }
-    result
-}
-
-fn parse_jsonl_numbers(content: &str) -> Vec<i64> {
-    let mut result = Vec::<i64>::new();
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        if let Ok(json_line) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            if let Some(v) = json_line.get("value").and_then(|x| x.as_i64()) {
-                result.push(v);
-            }
-        }
-    }
-
-    result
-}
+// Functions moved to master::lib
 
 
 /// Submit a job for execution

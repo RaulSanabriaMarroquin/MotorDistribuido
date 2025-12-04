@@ -1,2 +1,8 @@
+<<<<<<< HEAD
 /target/
 /**/*.rs.bk
+=======
+# Rust build artifacts
+target/
+
+>>>>>>> dcd73d5e5abbdc938a29f169fa022dc4defec6c9
