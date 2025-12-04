@@ -4,19 +4,19 @@
 
 ## 1. Objetivo de Aprendizaje
 
-Dise├▒ar e implementar un sistema distribuido desde cero que ejercite conceptos de procesos/hilos, IPC/redes, planificaci├│n, memoria, sistema de archivos y coordinaci├│n distribuida. El sistema debe exponer una API cliente para enviar trabajos y consultar estado, y ejecutar dichos trabajos en un cluster sencillo de nodos workers coordinados por un master.
+Diseñar e implementar un sistema distribuido desde cero que ejercite conceptos de procesos/hilos, IPC/redes, planificación, memoria, sistema de archivos y coordinación distribuida. El sistema debe exponer una API cliente para enviar trabajos y consultar estado, y ejecutar dichos trabajos en un cluster sencillo de nodos workers coordinados por un master.
 
 ---
 
-## 2. Descripci├│n General
+## 2. Descripción General
 
-Cada equipo implementar├í una de las dos rutas:
+Cada equipo implementará una de las dos rutas:
 
 - **Ruta A: Batch DAG (mini-Spark)**: motor por job con DAG de etapas (map, filter, reduce, join, aggregate) sobre datos de archivos. Planifica tareas, maneja particiones y reintentos.
 
-- **Ruta B: Streaming (mini-Flink)**: motor por topolog├¡a con operadores (map, filter, keyed window aggregate) sobre flujos. Debe soportar ventanas por tiempo y checkpointing simplificado.
+- **Ruta B: Streaming (mini-Flink)**: motor por topología con operadores (map, filter, keyed window aggregate) sobre flujos. Debe soportar ventanas por tiempo y checkpointing simplificado.
 
-> **Nota**: El proyecto es acad├®mico (no producci├│n). Se prioriza claridad de dise├▒o, cobertura de pruebas y evidencia de conceptos de SO.
+> **Nota**: El proyecto es académico (no producción). Se prioriza claridad de diseño, cobertura de pruebas y evidencia de conceptos de SO.
 
 ---
 
@@ -26,17 +26,17 @@ Cada equipo implementar├í una de las dos rutas:
 - **Rust** o **Go**
 
 ### Restricciones
-- ÔØî **Prohibido** usar frameworks de computaci├│n distribuida/streaming (Spark/Flink/Ray/Temporal/etc.)
-- Ô£à **Permitidas** librer├¡as est├índar de:
+-  **Prohibido** usar frameworks de computación distribuida/streaming (Spark/Flink/Ray/Temporal/etc.)
+-  **Permitidas** librerías estándar de:
   - Red (TCP/UDP/HTTP)
-  - Serializaci├│n (JSON/MsgPack)
+  - Serialización (JSON/MsgPack)
   - Logging
-  - Utilidades b├ísicas
+  - Utilidades básicas
 
-### Ejecuci├│n
+### Ejecución
 - Multi-proceso o multi-hilo por nodo
-- Comunicaci├│n inter-nodo por sockets TCP o HTTP/1.1
-- Despliegue local multinodo: m├║ltiples procesos en la misma m├íquina o en varias m├íquinas (opcional)
+- Comunicación inter-nodo por sockets TCP o HTTP/1.1
+- Despliegue local multinodo: múltiples procesos en la misma máquina o en varias máquinas (opcional)
 - Se debe usar un **docker-compose simple**
 
 ### Reproducibilidad
@@ -44,57 +44,57 @@ Cada equipo implementar├í una de las dos rutas:
 
 ---
 
-## 4. Arquitectura M├¡nima Requerida
+## 4. Arquitectura Mínima Requerida
 
 ### 4.1 Componentes
 
 #### 1. Master/Coordinator
 
 - Registro de workers y heartbeats
-- Recepci├│n de jobs (Batch) o topolog├¡as (Streaming)
-- **Planificador**: asigna tareas/operadores a workers; pol├¡tica b├ísica (round-robin + awareness de carga)
-- Persistencia m├¡nima del estado del job/topolog├¡a (en archivos o sqlite local)
+- Recepción de jobs (Batch) o topologías (Streaming)
+- **Planificador**: asigna tareas/operadores a workers; política básica (round-robin + awareness de carga)
+- Persistencia mínima del estado del job/topología (en archivos o sqlite local)
 
 #### 2. Workers
 
-- Ejecuci├│n de tareas/operadores aisladas en hilos o procesos
+- Ejecución de tareas/operadores aisladas en hilos o procesos
 - Manejo de particiones de datos (Batch) o buffers de eventos (Streaming)
-- Reintentos y reportes de estado (├®xito/falla, m├®tricas)
+- Reintentos y reportes de estado (éxito/falla, métricas)
 
 #### 3. Cliente (CLI)
 
-- Env├¡o de job/topolog├¡a v├¡a API
-- Consulta de estado, progreso, m├®tricas y descarga de resultados
+- Envío de job/topología vía API
+- Consulta de estado, progreso, métricas y descarga de resultados
 
-### 4.2 Coordinaci├│n y Tolerancia a Fallos (Simulada)
+### 4.2 Coordinación y Tolerancia a Fallos (Simulada)
 
 - **Heartbeats** (cada 1-3 s) desde workers; si un worker deja de latir, el master lo marca DOWN y replanifica tareas pendientes
 - **Reintentos**: al menos 1 reintento por tarea fallida
-- **Checkpoints** (s├│lo Ruta B): snapshot peri├│dico del estado de ventanas/keys a disco local (best-effort)
-- **Idempotencia b├ísica**: evitar duplicar resultados en reejecuciones (e.g., task attempt id)
+- **Checkpoints** (sólo Ruta B): snapshot periódico del estado de ventanas/keys a disco local (best-effort)
+- **Idempotencia básica**: evitar duplicar resultados en reejecuciones (e.g., task attempt id)
 
 ### 4.3 Almacenamiento y Memoria
 
-- **Batch**: cache en memoria por partici├│n con spill a disco cuando supere umbral configurable
-- **Streaming**: colas/buffers con backpressure simple (bloqueo o ca├¡da controlada de tasa)
+- **Batch**: cache en memoria por partición con spill a disco cuando supere umbral configurable
+- **Streaming**: colas/buffers con backpressure simple (bloqueo o caída controlada de tasa)
 
 ---
 
-## 5. API (Especificaci├│n)
+## 5. API (Especificación)
 
-### 5.1 Contrato HTTP/JSON m├¡nimo
+### 5.1 Contrato HTTP/JSON mínimo
 
 #### Endpoints Batch:
 - `POST /api/v1/jobs`: cuerpo JSON con dag (nodos, edges), inputs, paralelismo, partitions
-- `GET /api/v1/jobs/{id}`: estado (ACCEPTED/RUNNING/FAILED/SUCCEEDED), progreso (%), m├®tricas
+- `GET /api/v1/jobs/{id}`: estado (ACCEPTED/RUNNING/FAILED/SUCCEEDED), progreso (%), métricas
 - `GET /api/v1/jobs/{id}/results`: URL/paths de salida
 
 #### Endpoints Streaming:
-- `POST /api/v1/topologies`: operadores y wiring; ventanas (tama├▒o, slide); claves
-- `GET /api/v1/topologies/{id}`: estado, progreso, m├®tricas
-- `POST /api/v1/ingest`: endpoint opcional para inyectar eventos (JSON por l├¡nea)
+- `POST /api/v1/topologies`: operadores y wiring; ventanas (tamaño, slide); claves
+- `GET /api/v1/topologies/{id}`: estado, progreso, métricas
+- `POST /api/v1/ingest`: endpoint opcional para inyectar eventos (JSON por línea)
 
-### 5.2 Formato de Job/Topolog├¡a
+### 5.2 Formato de Job/Topología
 
 #### Ejemplo de Job (Batch):
 
@@ -120,7 +120,7 @@ Cada equipo implementar├í una de las dos rutas:
 
 ---
 
-## 6. Operadores M├¡nimos por Ruta
+## 6. Operadores Mínimos por Ruta
 
 ### Operadores Comunes
 
@@ -143,24 +143,24 @@ Cada equipo implementar├í una de las dos rutas:
 
 ---
 
-## 7. Planificador y Ejecuci├│n
+## 7. Planificador y Ejecución
 
-- **Planificaci├│n**: cola de tareas en el master + asignaci├│n round-robin con carga
-- **Ejecuci├│n**: cada worker mantiene un pool de hilos/procesos configurables
-- **Aislamiento**: cada tarea se ejecuta con l├¡mites de memoria/tiempo configurables (terminaci├│n si excede)
+- **Planificación**: cola de tareas en el master + asignación round-robin con carga
+- **Ejecución**: cada worker mantiene un pool de hilos/procesos configurables
+- **Aislamiento**: cada tarea se ejecuta con límites de memoria/tiempo configurables (terminación si excede)
 
 ---
 
-## 8. M├®tricas y Observabilidad
+## 8. Métricas y Observabilidad
 
 ### Por nodo:
 - Uso de CPU (aprox.)
 - Memoria
-- N├║mero de tareas activas
+- Número de tareas activas
 - Latencia promedio
 - #reintentos
 
-### Por job/topolog├¡a:
+### Por job/topología:
 - Tiempo total
 - Etapas
 - Throughput (Streaming)
@@ -175,30 +175,30 @@ Cada equipo implementar├í una de las dos rutas:
 
 ### Batch recomendado:
 - **WordCount** en CSV/JSONL (text, ts)
-- **Joins**: ventas & cat├ílogo (100-500 MB totales con archivos repetidos para particiones)
+- **Joins**: ventas & catálogo (100-500 MB totales con archivos repetidos para particiones)
 
 ### Streaming recomendado:
-- Flujo de logs (JSONL con ts, level, service, msg) y agregaci├│n por ventana
+- Flujo de logs (JSONL con ts, level, service, msg) y agregación por ventana
 
 ---
 
 ## 10. Hitos por Semana (4 Semanas)
 
-### Semana 1 - Dise├▒o y scaffolding
+### Semana 1 - Diseño y scaffolding
 - Documento de arquitectura (proceso master/worker, IPC, API)
 - Prototipo de registro de workers y healthcheck
 
-### Semana 2 - Planificaci├│n y ejecuci├│n b├ísica
-- Env├¡o de job/topolog├¡a
-- Ejecuci├│n de map/filter
-- M├®trica de progreso
+### Semana 2 - Planificación y ejecución básica
+- Envío de job/topología
+- Ejecución de map/filter
+- Métrica de progreso
 
 ### Semana 3 - Operadores avanzados y tolerancia a fallos
 - reduce_by_key + (join o ventanas)
-- Reintentos y replanificaci├│n
+- Reintentos y replanificación
 
 ### Semana 4 - Observabilidad, pulido y demo
-- M├®tricas, logging
+- Métricas, logging
 - Makefile, README
 - Video y defensa
 
@@ -218,32 +218,32 @@ Cada equipo implementar├í una de las dos rutas:
 
 ### Pruebas
 - **Unitarias**: operadores
-- **Integraci├│n**: nodo ├║nico
+- **Integración**: nodo único
 - **End-to-end**: multinodo local
 
 ### Fallos simulados
-- Matar un worker durante la ejecuci├│n y demostrar recuperaci├│n
+- Matar un worker durante la ejecución y demostrar recuperación
 
-### Benchmarks m├¡nimos
+### Benchmarks mínimos
 - **Batch**: lote de 1M registros
 - **Streaming**: 5k eventos/s durante 60s
 - Con reporte de resultados
 
 ---
 
-## 12. Restricciones y Buenas Pr├ícticas
+## 12. Restricciones y Buenas Prácticas
 
-- ÔØî Sin frameworks distribuidos; escribir su propio planificador y ejecuci├│n
-- Ô£à Serializaci├│n consistente (JSON o MsgPack) y versionado del mensaje
-- Ô£à No bloquear el master con trabajo pesado (s├│lo coordinaci├│n)
-- Ô£à Manejo de se├▒ales para apagado ordenado
+- ÔØî Sin frameworks distribuidos; escribir su propio planificador y ejecución
+- Ô£à Serialización consistente (JSON o MsgPack) y versionado del mensaje
+- Ô£à No bloquear el master con trabajo pesado (sólo coordinación)
+- Ô£à Manejo de señales para apagado ordenado
 
 ---
 
 ## 13. Entregables
 
-1. **C├│digo fuente** en repo con:
-   - README (build/ejecuci├│n)
+1. **Código fuente** en repo con:
+   - README (build/ejecución)
    - Makefile
    - Scripts
 
@@ -251,54 +251,54 @@ Cada equipo implementar├í una de las dos rutas:
    - Modelo de procesos/hilos
    - API
    - Protocolos
-   - Planificaci├│n
+   - Planificación
    - Memoria
    - Fallos
 
-3. **Suite de pruebas** (con c├│mo ejecutarlas)
+3. **Suite de pruebas** (con cómo ejecutarlas)
 
 4. **Video demostrativo**: 
-   - Instalaci├│n
-   - Ejecuci├│n
+   - Instalación
+   - Ejecución
    - Casos de prueba (incl. fallo simulado)
 
 5. **Reporte de benchmarks**: 
    - Entorno
-   - Par├ímetros
+   - Parámetros
    - Resultados
 
 ---
 
-## 14. Pol├¡tica de Entrega
+## 14. Política de Entrega
 
-- **Entrega**: antes de las **10:00 pm** del d├¡a de la entrega
+- **Entrega**: antes de las **10:00 pm** del día de la entrega
 - **Formato**: archivo `.zip` mediante el TecDigital
 - **Grupos**: en los grupos de trabajo previamente establecidos
-- **Penalizaci├│n**: 5 puntos porcentuales por cada 24 horas de retraso acumuladas
+- **Penalización**: 5 puntos porcentuales por cada 24 horas de retraso acumuladas
 
 ---
 
-## 15. R├║brica de Evaluaci├│n
+## 15. Rúbrica de Evaluación
 
-| Criterio | Pond. | Descripci├│n |
+| Criterio | Pond. | Descripción |
 |:---------|:----:|:------------|
-| Dise├▒o y documento de arquitectura | 15% | Claridad, decisiones de SO, diagramas |
-| API y cliente (contrato y usabilidad) | 10% | Endpoints, validaci├│n, CLI usable |
-| Coordinaci├│n y planificaci├│n | 15% | Registro, heartbeats, asignaci├│n, reintentos |
-| Ejecuci├│n distribuida y operadores m├¡nimos | 20% | map/filter/flat_map + reduce_by_key; (join o ventanas) |
-| Tolerancia a fallos (simulada) | 10% | Detecci├│n, replanificaci├│n, idempotencia b├ísica |
+| Diseño y documento de arquitectura | 15% | Claridad, decisiones de SO, diagramas |
+| API y cliente (contrato y usabilidad) | 10% | Endpoints, validación, CLI usable |
+| Coordinación y planificación | 15% | Registro, heartbeats, asignación, reintentos |
+| Ejecución distribuida y operadores mínimos | 20% | map/filter/flat_map + reduce_by_key; (join o ventanas) |
+| Tolerancia a fallos (simulada) | 10% | Detección, replanificación, idempotencia básica |
 | Memoria/Almacenamiento & backpressure | 10% | Cache/Spill (Batch) o buffers/ventanas (Streaming) |
-| Pruebas (unitarias/integraci├│n/E2E) | 10% | Cobertura y automatizaci├│n |
-| Observabilidad y m├®tricas | 5% | Logs, m├®tricas por nodo y por job/topolog├¡a |
+| Pruebas (unitarias/integración/E2E) | 10% | Cobertura y automatización |
+| Observabilidad y métricas | 5% | Logs, métricas por nodo y por job/topología |
 | Demo y benchmarks | 5% | Video claro, escenarios y reporte de rendimiento |
-| Calidad del c├│digo y repositorio | 5% | Organizaci├│n, lectura, scripts de build |
+| Calidad del código y repositorio | 5% | Organización, lectura, scripts de build |
 | **Total** | **100%** | |
 
 ---
 
 ## 16. Notas y Alcances
 
-- Se evaluar├í el **entendimiento de SO** evidenciado en el dise├▒o y en la implementaci├│n, no s├│lo la funcionalidad
-- Se permite usar IA como apoyo (b├║squeda, documentaci├│n); cualquier uso debe declararse en el README
+- Se evaluará el **entendimiento de SO** evidenciado en el diseño y en la implementación, no sólo la funcionalidad
+- Se permite usar IA como apoyo (búsqueda, documentación); cualquier uso debe declararse en el README
 
 ---

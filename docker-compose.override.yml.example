@@ -1,0 +1,24 @@
+# Archivo de ejemplo para personalizar docker-compose
+# Copia este archivo a docker-compose.override.yml para personalizar
+
+version: '3.8'
+
+services:
+  # Ejemplo: Agregar más workers
+  # worker4:
+  #   build: .
+  #   container_name: motor-worker4
+  #   command: ./worker
+  #   depends_on:
+  #     - master
+  #   environment:
+  #     - MASTER_URL=http://master:8080
+  #     - WORKER_HOST=0.0.0.0
+  #     - WORKER_PORT=8084
+  #     - HEARTBEAT_INTERVAL_SECS=3
+  #     - RUST_LOG=info
+  #   ports:
+  #     - "8084:8084"
+  #   networks:
+  #     - motor-network
+

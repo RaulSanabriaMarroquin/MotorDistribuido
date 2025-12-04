@@ -1,0 +1,96 @@
+services:
+  # Master node
+  master:
+    build: .
+    container_name: motor-master
+    command: ./master
+    ports:
+      - "8080:8080"
+    environment:
+      - MASTER_HOST=0.0.0.0
+      - MASTER_PORT=8080
+      - RUST_LOG=info
+    networks:
+      - motor-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/workers"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Worker 1
+  worker1:
+    build: .
+    container_name: motor-worker1
+    command: ./worker
+    depends_on:
+      - master
+    environment:
+      - MASTER_URL=http://master:8080
+      - WORKER_HOST=0.0.0.0
+      - WORKER_PORT=8081
+      - HEARTBEAT_INTERVAL_SECS=3
+      - DOCKER=1
+      - RUST_LOG=info
+    ports:
+      - "8081:8081"
+    networks:
+      - motor-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Worker 2
+  worker2:
+    build: .
+    container_name: motor-worker2
+    command: ./worker
+    depends_on:
+      - master
+    environment:
+      - MASTER_URL=http://master:8080
+      - WORKER_HOST=0.0.0.0
+      - WORKER_PORT=8082
+      - HEARTBEAT_INTERVAL_SECS=3
+      - DOCKER=1
+      - RUST_LOG=info
+    ports:
+      - "8082:8082"
+    networks:
+      - motor-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Worker 3 (opcional, para demostrar escalabilidad)
+  worker3:
+    build: .
+    container_name: motor-worker3
+    command: ./worker
+    depends_on:
+      - master
+    environment:
+      - MASTER_URL=http://master:8080
+      - WORKER_HOST=0.0.0.0
+      - WORKER_PORT=8083
+      - HEARTBEAT_INTERVAL_SECS=3
+      - DOCKER=1
+      - RUST_LOG=info
+    ports:
+      - "8083:8083"
+    networks:
+      - motor-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+networks:
+  motor-network:
+    driver: bridge
+

@@ -117,8 +117,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_state(state);
 
     // Start server
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
-    info!("Master node listening on 127.0.0.1:8080");
+    // Configurar dirección de bind (por defecto 127.0.0.1, pero 0.0.0.0 para Docker)
+    let bind_host = std::env::var("MASTER_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let bind_port = std::env::var("MASTER_PORT").unwrap_or_else(|_| "8080".to_string());
+    let bind_addr = format!("{}:{}", bind_host, bind_port);
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+    info!("Master node listening on {}", bind_addr);
 
     use shutdown::wait_for_shutdown_signal;
 
